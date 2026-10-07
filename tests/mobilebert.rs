@@ -1,3 +1,4 @@
+#![cfg(feature = "libtorch")]
 use rust_bert::mobilebert::{
     MobileBertConfig, MobileBertConfigResources, MobileBertForMaskedLM,
     MobileBertForMultipleChoice, MobileBertForQuestionAnswering,

@@ -1,4 +1,4 @@
-#[cfg(feature = "onnx")]
+#[cfg(all(feature = "onnx", feature = "libtorch"))]
 mod tests {
     extern crate anyhow;
 

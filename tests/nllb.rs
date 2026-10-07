@@ -1,3 +1,4 @@
+#![cfg(feature = "libtorch")]
 use rust_bert::nllb::{
     NLLBConfigResources, NLLBLanguages, NLLBMergeResources, NLLBResources, NLLBVocabResources,
 };

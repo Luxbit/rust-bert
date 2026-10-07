@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::common::activations::{TensorFunction, _tanh};
+use crate::common::activations::{_tanh, TensorFunction};
 use crate::common::dropout::Dropout;
 use crate::common::embeddings::get_shape_and_device_from_ids_embeddings_pair;
 use crate::fnet::embeddings::FNetEmbeddings;

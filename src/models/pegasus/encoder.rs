@@ -10,7 +10,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::bart::{BartEncoderOutput, _expand_mask};
+use crate::bart::{_expand_mask, BartEncoderOutput};
 use crate::common::dropout::Dropout;
 use crate::mbart::MBartEncoderLayer;
 use crate::pegasus::embeddings::SinusoidalPositionalEmbedding;

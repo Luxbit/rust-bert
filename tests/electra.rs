@@ -1,3 +1,4 @@
+#![cfg(feature = "libtorch")]
 use rust_bert::electra::{
     ElectraConfig, ElectraConfigResources, ElectraDiscriminator, ElectraForMaskedLM,
     ElectraModelResources, ElectraVocabResources,

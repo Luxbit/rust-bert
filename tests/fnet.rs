@@ -1,3 +1,4 @@
+#![cfg(feature = "libtorch")]
 extern crate anyhow;
 extern crate dirs;
 

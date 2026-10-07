@@ -294,8 +294,7 @@ impl MaskedLanguageOption {
 
     #[cfg(feature = "onnx")]
     pub fn new_onnx(config: &MaskedLanguageConfig) -> Result<Self, RustBertError> {
-        let onnx_config = ONNXEnvironmentConfig::from_device(config.device);
-        let environment = onnx_config.get_environment()?;
+        let onnx_config = ONNXEnvironmentConfig::from_device(crate::Device::from(config.device));
         let encoder_file = config
             .model_resource
             .get_onnx_local_paths()?
@@ -304,11 +303,7 @@ impl MaskedLanguageOption {
                 "An encoder file must be provided for masked language ONNX models.".to_string(),
             ))?;
 
-        Ok(Self::ONNX(ONNXEncoder::new(
-            encoder_file,
-            &environment,
-            &onnx_config,
-        )?))
+        Ok(Self::ONNX(ONNXEncoder::new(encoder_file, &onnx_config)?))
     }
     /// Returns the `ModelType` for this MaskedLanguageOption
     pub fn model_type(&self) -> ModelType {
@@ -400,18 +395,35 @@ impl MaskedLanguageOption {
                     .prediction_scores
             }
             #[cfg(feature = "onnx")]
+            #[cfg(feature = "onnx")]
             Self::ONNX(ref model) => {
-                let attention_mask = input_ids.unwrap().ones_like();
+                use crate::common::tensor_conversion::{
+                    array_to_tensor_f32, tensor_to_array_f32, tensor_to_array_i64,
+                };
+                let ids = |t: &Tensor| {
+                    tensor_to_array_i64(t).expect("Error converting input tensor to ndarray")
+                };
+                let flt = |t: &Tensor| {
+                    tensor_to_array_f32(t).expect("Error converting input tensor to ndarray")
+                };
+                let input_ids = input_ids.map(|t| ids(t));
+                let attention_mask = input_ids
+                    .as_ref()
+                    .map(|array| crate::common::tensor_ops::ones_i64(array.shape()));
+                let token_type_ids = token_type_ids.map(|t| ids(t));
+                let position_ids = position_ids.map(|t| ids(t));
+                let input_embeds = input_embeds.map(|t| flt(t));
                 model
                     .forward(
-                        input_ids,
-                        Some(&attention_mask),
-                        token_type_ids,
-                        position_ids,
-                        input_embeds,
+                        input_ids.as_ref(),
+                        attention_mask.as_ref(),
+                        token_type_ids.as_ref(),
+                        position_ids.as_ref(),
+                        input_embeds.as_ref(),
                     )
                     .expect("Error in ONNX forward pass.")
                     .logits
+                    .map(|array| array_to_tensor_f32(&array).expect("Error converting ONNX output"))
                     .unwrap()
             }
         }

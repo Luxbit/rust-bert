@@ -1,4 +1,4 @@
-use ort::Session;
+use ort::session::Session;
 use std::collections::HashMap;
 
 #[derive(Debug)]
@@ -10,16 +10,16 @@ pub(crate) struct InputOutputNameMapping {
 
 pub(crate) fn get_input_output_mapping(session: &Session) -> InputOutputNameMapping {
     let input_names = session
-        .inputs
+        .inputs()
         .iter()
-        .map(|input| input.name.clone())
+        .map(|input| input.name().to_string())
         .collect::<Vec<String>>();
 
     let output_names = session
-        .outputs
+        .outputs()
         .iter()
         .enumerate()
-        .map(|(pos, output)| (output.name.clone(), pos))
+        .map(|(pos, output)| (output.name().to_string(), pos))
         .collect::<HashMap<String, usize>>();
 
     let mut key_value_output_names = output_names

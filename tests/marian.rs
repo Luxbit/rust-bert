@@ -1,3 +1,4 @@
+#![cfg(feature = "libtorch")]
 use rust_bert::marian::{
     MarianConfigResources, MarianModelResources, MarianSourceLanguages, MarianSpmResources,
     MarianTargetLanguages, MarianVocabResources,

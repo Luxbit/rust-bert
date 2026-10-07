@@ -1,3 +1,4 @@
+#![cfg(feature = "libtorch")]
 #[cfg(feature = "hf-tokenizers")]
 mod tests {
     use rust_bert::gpt2::{Gpt2ConfigResources, Gpt2ModelResources};

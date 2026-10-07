@@ -10,7 +10,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::bart::{BartDecoderOutput, _expand_mask, _make_causal_mask};
+use crate::bart::{_expand_mask, _make_causal_mask, BartDecoderOutput};
 use crate::common::dropout::Dropout;
 use crate::m2m_100::embeddings::SinusoidalPositionalEmbedding;
 use crate::m2m_100::{LayerState, M2M100Config};

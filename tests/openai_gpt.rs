@@ -1,3 +1,4 @@
+#![cfg(feature = "libtorch")]
 use rust_bert::openai_gpt::{
     OpenAIGPTLMHeadModel, OpenAiGptConfig, OpenAiGptConfigResources, OpenAiGptMergesResources,
     OpenAiGptModelResources, OpenAiGptVocabResources,

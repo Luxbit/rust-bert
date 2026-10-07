@@ -1,3 +1,4 @@
+#![cfg(feature = "libtorch")]
 use rust_bert::gpt_j::{
     GptJConfig, GptJConfigResources, GptJLMHeadModel, GptJMergesResources, GptJModelResources,
     GptJVocabResources,

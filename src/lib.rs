@@ -727,13 +727,21 @@
 
 extern crate core;
 
+#[cfg(all(not(feature = "libtorch"), not(feature = "onnx")))]
+compile_error!("rust-bert requires at least one inference backend: enable the `libtorch` feature (enabled by default) and/or the `onnx` feature.");
+
 mod common;
+#[cfg(feature = "libtorch")]
 pub mod models;
 pub mod pipelines;
 
+pub use common::device::Device;
 pub use common::error::RustBertError;
 pub use common::resources;
-pub use common::{Activation, Config};
+#[cfg(feature = "libtorch")]
+pub use common::Activation;
+pub use common::Config;
+#[cfg(feature = "libtorch")]
 pub use models::{
     albert, bart, bert, deberta, deberta_v2, distilbert, electra, fnet, gpt2, gpt_j, gpt_neo,
     longformer, longt5, m2m_100, marian, mbart, mobilebert, nllb, openai_gpt, pegasus, prophetnet,

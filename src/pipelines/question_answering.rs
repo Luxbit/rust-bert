@@ -485,8 +485,7 @@ impl QuestionAnsweringOption {
 
     #[cfg(feature = "onnx")]
     pub fn new_onnx(config: &QuestionAnsweringConfig) -> Result<Self, RustBertError> {
-        let onnx_config = ONNXEnvironmentConfig::from_device(config.device);
-        let environment = onnx_config.get_environment()?;
+        let onnx_config = ONNXEnvironmentConfig::from_device(crate::Device::from(config.device));
         let encoder_file = config
             .model_resource
             .get_onnx_local_paths()?
@@ -495,11 +494,7 @@ impl QuestionAnsweringOption {
                 "An encoder file must be provided for question answering ONNX models.".to_string(),
             ))?;
 
-        Ok(Self::ONNX(ONNXEncoder::new(
-            encoder_file,
-            &environment,
-            &onnx_config,
-        )?))
+        Ok(Self::ONNX(ONNXEncoder::new(encoder_file, &onnx_config)?))
     }
 
     /// Returns the `ModelType` for this SequenceClassificationOption
@@ -593,16 +588,37 @@ impl QuestionAnsweringOption {
             }
             #[cfg(feature = "onnx")]
             Self::ONNX(ref model) => {
+                use crate::common::tensor_conversion::{
+                    array_to_tensor_f32, tensor_to_array_f32, tensor_to_array_i64,
+                };
+                let ids = |t: &Tensor| {
+                    tensor_to_array_i64(t).expect("Error converting input tensor to ndarray")
+                };
+                let flt = |t: &Tensor| {
+                    tensor_to_array_f32(t).expect("Error converting input tensor to ndarray")
+                };
+                let input_ids = input_ids.map(|t| ids(t));
+                let mask = mask.map(|t| ids(t));
+                let token_type_ids = _token_type_ids.map(|t| ids(t));
+                let input_embeds = input_embeds.map(|t| flt(t));
                 let outputs = model
                     .forward(
-                        input_ids,
-                        mask.map(|tensor| tensor.to_kind(Kind::Int64)).as_ref(),
-                        _token_type_ids,
+                        input_ids.as_ref(),
+                        mask.as_ref(),
+                        token_type_ids.as_ref(),
                         None,
-                        input_embeds,
+                        input_embeds.as_ref(),
                     )
                     .expect("Error in ONNX forward pass.");
-                (outputs.start_logits.unwrap(), outputs.end_logits.unwrap())
+                let start_logits = outputs
+                    .start_logits
+                    .map(|array| array_to_tensor_f32(&array).expect("Error converting ONNX output"))
+                    .unwrap();
+                let end_logits = outputs
+                    .end_logits
+                    .map(|array| array_to_tensor_f32(&array).expect("Error converting ONNX output"))
+                    .unwrap();
+                (start_logits, end_logits)
             }
         }
     }

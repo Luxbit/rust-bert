@@ -1,87 +1,55 @@
+//! Conversions between `ndarray` arrays and `ort` values, used by the ONNX sessions.
 use crate::RustBertError;
-use ndarray::{ArrayBase, ArrayD, CowArray, CowRepr, IxDyn};
+use ndarray::ArrayD;
+use ort::session::{SessionInputValue, SessionOutputs};
+use ort::value::{DynValue, Tensor};
 
-use ort::{Session, Value};
-use std::convert::{TryFrom, TryInto};
-use tch::{Kind, Tensor};
-
-pub(crate) fn ort_tensor_to_tch(ort_tensor: &Value) -> Result<Tensor, RustBertError> {
-    let ort_tensor = ort_tensor.try_extract::<f32>()?.view().to_owned();
-    Ok(Tensor::try_from(ort_tensor)?)
+/// Input for an ONNX session, holding an owned array of a supported element type.
+pub(crate) enum ONNXInput {
+    I64(ArrayD<i64>),
+    F32(ArrayD<f32>),
 }
 
-pub(crate) fn array_to_ort<'a>(
-    session: &Session,
-    array: &'a TypedArray<'a>,
-) -> Result<Value<'a>, RustBertError> {
-    match &array {
-        TypedArray::I64(array) => Ok(Value::from_array(session.allocator(), array)?),
-        TypedArray::F32(array) => Ok(Value::from_array(session.allocator(), array)?),
-        TypedArray::I32(array) => Ok(Value::from_array(session.allocator(), array)?),
-        TypedArray::F64(array) => Ok(Value::from_array(session.allocator(), array)?),
-        TypedArray::F16(array) => Ok(Value::from_array(session.allocator(), array)?),
-        TypedArray::I16(array) => Ok(Value::from_array(session.allocator(), array)?),
-        TypedArray::I8(array) => Ok(Value::from_array(session.allocator(), array)?),
-        TypedArray::UI8(array) => Ok(Value::from_array(session.allocator(), array)?),
-        TypedArray::BF16(array) => Ok(Value::from_array(session.allocator(), array)?),
+impl ONNXInput {
+    pub(crate) fn into_value(self) -> Result<SessionInputValue<'static>, RustBertError> {
+        match self {
+            ONNXInput::I64(array) => Ok(Tensor::from_array(array)?.into_dyn().into()),
+            ONNXInput::F32(array) => Ok(Tensor::from_array(array)?.into_dyn().into()),
+        }
     }
 }
 
-pub(crate) enum TypedArray<'a> {
-    I64(ArrayBase<CowRepr<'a, i64>, IxDyn>),
-    F32(ArrayBase<CowRepr<'a, f32>, IxDyn>),
-    I32(ArrayBase<CowRepr<'a, i32>, IxDyn>),
-    F64(ArrayBase<CowRepr<'a, f64>, IxDyn>),
-    F16(ArrayBase<CowRepr<'a, half::f16>, IxDyn>),
-    I16(ArrayBase<CowRepr<'a, i16>, IxDyn>),
-    I8(ArrayBase<CowRepr<'a, i8>, IxDyn>),
-    UI8(ArrayBase<CowRepr<'a, u8>, IxDyn>),
-    BF16(ArrayBase<CowRepr<'a, half::bf16>, IxDyn>),
+/// Extract an `ort` output tensor as a dynamically dimensioned `ndarray` of `f32` values.
+///
+/// `f32` outputs are extracted directly; `f16`/`bf16` outputs are converted to `f32` on the fly.
+pub(crate) fn ort_output_to_array_f32(value: &DynValue) -> Result<ArrayD<f32>, RustBertError> {
+    if let Ok(view) = value.try_extract_array::<f32>() {
+        return Ok(view.to_owned());
+    }
+    if let Ok(view) = value.try_extract_array::<half::f16>() {
+        return Ok(view.mapv(half::f16::to_f32));
+    }
+    if let Ok(view) = value.try_extract_array::<half::bf16>() {
+        return Ok(view.mapv(half::bf16::to_f32));
+    }
+    Err(RustBertError::OrtError(
+        "ONNX output could not be extracted: expected a f32 tensor.".to_string(),
+    ))
 }
 
-pub(crate) fn tch_tensor_to_ndarray(tch_tensor: &Tensor) -> Result<TypedArray, RustBertError> {
-    let kind = tch_tensor.kind();
-    Ok(match kind {
-        Kind::Int64 => {
-            let array: ArrayD<i64> = tch_tensor.try_into()?;
-            TypedArray::I64(CowArray::from(array))
-        }
-        Kind::Float => {
-            let array: ArrayD<f32> = tch_tensor.try_into()?;
-            TypedArray::F32(CowArray::from(array))
-        }
-        Kind::Int => {
-            let array: ArrayD<i32> = tch_tensor.try_into()?;
-            TypedArray::I32(CowArray::from(array))
-        }
-        Kind::Double => {
-            let array: ArrayD<f64> = tch_tensor.try_into()?;
-            TypedArray::F64(CowArray::from(array))
-        }
-        Kind::Half => {
-            let array: ArrayD<half::f16> = tch_tensor.try_into()?;
-            TypedArray::F16(CowArray::from(array))
-        }
-        Kind::Int16 => {
-            let array: ArrayD<i16> = tch_tensor.try_into()?;
-            TypedArray::I16(CowArray::from(array))
-        }
-        Kind::Int8 => {
-            let array: ArrayD<i8> = tch_tensor.try_into()?;
-            TypedArray::I8(CowArray::from(array))
-        }
-        Kind::Uint8 => {
-            let array: ArrayD<u8> = tch_tensor.try_into()?;
-            TypedArray::UI8(CowArray::from(array))
-        }
-        Kind::BFloat16 => {
-            let array: ArrayD<half::bf16> = tch_tensor.try_into()?;
-            TypedArray::BF16(CowArray::from(array))
-        }
-        _ => {
-            return Err(RustBertError::ValueError(format!(
-                "Type not supported: attempted to get convert torch tensor to ndarray for {kind:?}",
-            )))
-        }
-    })
+/// Helper to collect the key/value cached states from the outputs of a decoder session.
+pub(crate) fn key_values_from_outputs(
+    outputs: &SessionOutputs,
+    key_value_names: &std::collections::HashMap<String, usize>,
+) -> Result<std::collections::HashMap<String, ArrayD<f32>>, RustBertError> {
+    key_value_names
+        .iter()
+        .filter(|(name, _)| name.contains("key") | name.contains("value"))
+        .map(|(name, _)| {
+            let value = outputs
+                .get(name.as_str())
+                .ok_or_else(|| RustBertError::OrtError(format!("Output {name} not found.")))?;
+            Ok((name.clone(), ort_output_to_array_f32(value)?))
+        })
+        .collect()
 }

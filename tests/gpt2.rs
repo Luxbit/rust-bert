@@ -1,3 +1,4 @@
+#![cfg(feature = "libtorch")]
 use rust_bert::gpt2::{
     GPT2Generator, GPT2LMHeadModel, Gpt2Config, Gpt2ConfigResources, Gpt2MergesResources,
     Gpt2ModelResources, Gpt2VocabResources,
