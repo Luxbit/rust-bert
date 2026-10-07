@@ -60,8 +60,11 @@ use std::convert::TryFrom;
 use std::fmt::Debug;
 
 use std::path::{Path, PathBuf};
+#[cfg(feature = "libtorch")]
 use tch::nn::VarStore;
-use tch::{Device, Kind, Tensor};
+use tch::Device;
+#[cfg(feature = "libtorch")]
+use tch::{Kind, Tensor};
 
 #[cfg(feature = "onnx")]
 use crate::pipelines::onnx::ONNXModelConfig;
@@ -2247,6 +2250,7 @@ impl TokenizerOption {
         }
     }
 
+    #[cfg(feature = "libtorch")]
     pub fn tokenize_and_pad<'a, S>(
         &self,
         input: S,
@@ -2351,6 +2355,7 @@ impl TokenizerOption {
     }
 }
 
+#[cfg(feature = "libtorch")]
 pub fn cast_var_store(varstore: &mut VarStore, kind: Option<Kind>, device: Device) {
     match (kind, device) {
         (Some(kind), _) => varstore.set_kind(kind),

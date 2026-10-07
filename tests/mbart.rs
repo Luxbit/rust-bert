@@ -1,3 +1,4 @@
+#![cfg(feature = "libtorch")]
 use rust_bert::mbart::{
     MBartConfig, MBartConfigResources, MBartModel, MBartModelResources, MBartVocabResources,
 };

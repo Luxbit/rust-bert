@@ -1,19 +1,25 @@
 use crate::pipelines::common::{ConfigOption, TokenizerOption};
-use crate::pipelines::generation_utils::private_generation_utils::{
-    PreparedInput, PrivateLanguageGenerator,
-};
-use crate::pipelines::generation_utils::{Cache, GenerateConfig, LMModelOutput, LanguageGenerator};
+use crate::pipelines::generation_utils::{Cache, GenerateConfig, LMModelOutput};
 use crate::pipelines::onnx::config::ONNXEnvironmentConfig;
 use crate::pipelines::onnx::decoder::ONNXDecoder;
 use crate::pipelines::onnx::encoder::ONNXEncoder;
 use crate::{Config, RustBertError};
 
-use crate::pipelines::onnx::conversion;
-use ort::{Environment, Value};
+#[cfg(feature = "libtorch")]
+use crate::common::tensor_conversion::{
+    array_to_tensor_f32, tensor_to_array_f32, tensor_to_array_i64, tensor_to_vec_i64,
+};
+#[cfg(feature = "libtorch")]
+use crate::pipelines::generation_utils::private_generation_utils::{
+    PreparedInput, PrivateLanguageGenerator,
+};
+#[cfg(feature = "libtorch")]
+use crate::pipelines::generation_utils::LanguageGenerator;
+
+use ndarray::ArrayD;
+use ort::session::SessionOutputs;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::Arc;
-use tch::{nn, Device, Kind, Tensor};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 /// # ONNX Model configuration
@@ -70,7 +76,7 @@ impl ONNXCausalGenerator {
     ///
     /// Extract the required model, tokenizer and configuration resources from a `GenerateConfig`.
     /// Note that the `model_resources` field of the `GenerateConfig` provided should be of the
-    /// `ModelResources::ONNX` type, passing a `ModelResources::ONNX` resource will cause the model
+    /// `ModelResources::ONNX` type, passing a `ModelResources::Torch` resource will cause the model
     /// to fail.
     ///
     /// The tokenizer is automatically created based on the `model_type` field of the `GenerateConfig`.
@@ -80,13 +86,11 @@ impl ONNXCausalGenerator {
     /// # Example
     ///
     /// ```no_run
-    /// use ort::Environment;
     /// use rust_bert::pipelines::common::{ModelResource, ModelType, ONNXModelResources};
     /// use rust_bert::pipelines::generation_utils::GenerateConfig;
     /// use rust_bert::pipelines::onnx::config::ONNXEnvironmentConfig;
     /// use rust_bert::pipelines::onnx::ONNXCausalGenerator;
     /// use rust_bert::resources::RemoteResource;
-    /// use std::sync::Arc;
     /// let generate_config = GenerateConfig {
     ///  model_type: ModelType::GPT2,
     ///  model_resource: ModelResource::ONNX(ONNXModelResources {
@@ -114,15 +118,13 @@ impl ONNXCausalGenerator {
     ///  ))),
     ///  ..Default::default()
     /// };
-    /// let environment = Some(Arc::new(Environment::default()));
     /// let onnx_config = Some(ONNXEnvironmentConfig::default());
     /// let onnx_causal_generator =
-    ///  ONNXCausalGenerator::new(generate_config, environment.as_ref(), onnx_config.as_ref())
+    ///  ONNXCausalGenerator::new(generate_config, onnx_config.as_ref())
     ///      .unwrap();
     /// ```
     pub fn new(
         generate_config: GenerateConfig,
-        environment: Option<&Arc<Environment>>,
         onnx_config: Option<&ONNXEnvironmentConfig>,
     ) -> Result<Self, RustBertError> {
         let vocab_path = generate_config.vocab_resource.get_local_path()?;
@@ -141,14 +143,14 @@ impl ONNXCausalGenerator {
             None,
         )?;
 
-        Self::new_with_tokenizer(generate_config, tokenizer, environment, onnx_config)
+        Self::new_with_tokenizer(generate_config, tokenizer, onnx_config)
     }
 
     /// Create a new `ONNXCausalGenerator` from a `GenerateConfig` and `TokenizerOption`.
     ///
     /// Extract the required model and configuration resources from a `GenerateConfig`.
     /// Note that the `model_resources` field of the `GenerateConfig` provided should be of the
-    /// `ModelResources::ONNX` type, passing a `ModelResources::ONNX` resource will cause the model
+    /// `ModelResources::ONNX` type, passing a `ModelResources::Torch` resource will cause the model
     /// to fail.
     ///
     /// A tokenizer must be provided by the user and can be customized to use non-default settings.
@@ -156,7 +158,6 @@ impl ONNXCausalGenerator {
     /// # Example
     ///
     /// ```no_run
-    /// use ort::Environment;
     /// use rust_bert::pipelines::common::{
     ///  ModelResource, ModelType, ONNXModelResources, TokenizerOption,
     /// };
@@ -164,7 +165,6 @@ impl ONNXCausalGenerator {
     /// use rust_bert::pipelines::onnx::config::ONNXEnvironmentConfig;
     /// use rust_bert::pipelines::onnx::ONNXCausalGenerator;
     /// use rust_bert::resources::RemoteResource;
-    /// use std::sync::Arc;
     /// let generate_config = GenerateConfig {
     ///  model_resource: ModelResource::ONNX(ONNXModelResources {
     ///      encoder_resource: None,
@@ -183,7 +183,6 @@ impl ONNXCausalGenerator {
     ///  )),
     ///  ..Default::default()
     /// };
-    /// let environment = Some(Arc::new(Environment::default()));
     /// let onnx_config = Some(ONNXEnvironmentConfig::default());
     /// let lower_case = false;
     /// let strip_accents = None;
@@ -200,7 +199,6 @@ impl ONNXCausalGenerator {
     /// let onnx_causal_generator = ONNXCausalGenerator::new_with_tokenizer(
     ///  generate_config,
     ///  tokenizer,
-    ///  environment.as_ref(),
     ///  onnx_config.as_ref(),
     /// )
     /// .unwrap();
@@ -208,7 +206,6 @@ impl ONNXCausalGenerator {
     pub fn new_with_tokenizer(
         generate_config: GenerateConfig,
         tokenizer: TokenizerOption,
-        environment: Option<&Arc<Environment>>,
         onnx_config: Option<&ONNXEnvironmentConfig>,
     ) -> Result<Self, RustBertError> {
         let config_path = generate_config.config_resource.get_local_path()?;
@@ -224,37 +221,23 @@ impl ONNXCausalGenerator {
             return Err(RustBertError::InvalidConfigurationError("Must provide at least one of `decoder_without_past_file`, `decoder_with_past_file`, both set to None".to_string()));
         }
 
-        let default_onnx_config = if onnx_config.is_none() {
-            Some(ONNXEnvironmentConfig::from_device(generate_config.device))
-        } else {
-            None
+        let default_onnx_config;
+        let onnx_config = match onnx_config {
+            Some(onnx_config) => onnx_config,
+            None => {
+                default_onnx_config =
+                    ONNXEnvironmentConfig::from_device(crate::Device::from(generate_config.device));
+                &default_onnx_config
+            }
         };
-        let onnx_config = onnx_config.unwrap_or_else(|| default_onnx_config.as_ref().unwrap());
-
-        let local_environment = if environment.is_none() {
-            Some(onnx_config.get_environment()?)
-        } else {
-            None
-        };
-        let environment = environment.unwrap_or_else(|| local_environment.as_ref().unwrap());
 
         let decoder_without_past = if let Some(model_file) = decoder_without_past_file {
-            Some(ONNXDecoder::new(
-                model_file,
-                true,
-                environment,
-                onnx_config,
-            )?)
+            Some(ONNXDecoder::new(model_file, true, onnx_config)?)
         } else {
             None
         };
         let decoder_with_past = if let Some(model_file) = decoder_with_past_file {
-            Some(ONNXDecoder::new(
-                model_file,
-                true,
-                environment,
-                onnx_config,
-            )?)
+            Some(ONNXDecoder::new(model_file, true, onnx_config)?)
         } else {
             None
         };
@@ -292,9 +275,9 @@ impl ONNXCausalGenerator {
     ///
     /// # Arguments
     ///
-    /// * `input_ids` - Optional input tensor of shape (*batch size*, *sequence_length*). If None, pre-computed embeddings must be provided (see `input_embeds`)
+    /// * `input_ids` - Optional input array of shape (*batch size*, *sequence_length*). If None, pre-computed embeddings must be provided (see `input_embeds`)
     /// * `attention_mask` - Optional mask of shape (*batch size*, *sequence_length*). Masked position have value 0, non-masked value 1. If None set to 1
-    /// * `encoder_hidden_states` - Optional tensor of shape (*batch size*, *source_sequence_length*, *encoder_hidden_dim*). These correspond to the encoder last hidden state.
+    /// * `encoder_hidden_states` - Optional array of shape (*batch size*, *source_sequence_length*, *encoder_hidden_dim*). These correspond to the encoder last hidden state.
     /// * `encoder_attention_mask` - Optional attention mask for the encoder outputs. Positions with a mask with value 0 will be masked.
     /// * `position_ids` - Optional position ids of shape (*batch size*, *sequence_length*). If None, will be incremented starting from the length of the past input.
     /// * `layer_states` - Optional `Cache` container containing the past keys and values. When provided, these are concatenated with the current input keys and values.
@@ -302,80 +285,15 @@ impl ONNXCausalGenerator {
     /// # Returns
     ///
     /// * `LMModelOutput` containing:
-    ///   - `lm_logits` - `Tensor` of shape (*batch size*, *sequence_length*, *vocab_size*) representing the activations of the last hidden state
+    ///   - `lm_logits` - logits of shape (*batch size*, *sequence_length*, *vocab_size*) representing the activations of the last hidden state
     ///   - `cache` - `Cache`  containing the past keys and values of each layer.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use ort::Environment;
-    /// use rust_bert::pipelines::common::{ModelResource, ModelType, ONNXModelResources};
-    /// use rust_bert::pipelines::generation_utils::{Cache, GenerateConfig};
-    /// use rust_bert::pipelines::onnx::config::ONNXEnvironmentConfig;
-    /// use rust_bert::pipelines::onnx::ONNXCausalGenerator;
-    /// use rust_bert::resources::RemoteResource;
-    /// use std::sync::Arc;
-    /// use tch::Kind::Int64;
-    /// use tch::{Device, Tensor};
-    /// let generate_config = GenerateConfig {
-    ///  model_type: ModelType::GPT2,
-    ///  model_resource: ModelResource::ONNX(ONNXModelResources {
-    ///      encoder_resource: None,
-    ///      decoder_resource: Some(Box::new(RemoteResource::new(
-    ///          "https://huggingface.co/optimum/gpt2/resolve/main/decoder_model.onnx",
-    ///          "onnx-gpt2",
-    ///      ))),
-    ///      decoder_with_past_resource: Some(Box::new(RemoteResource::new(
-    ///          "https://huggingface.co/optimum/gpt2/resolve/main/decoder_with_past_model.onnx",
-    ///          "onnx-gpt2",
-    ///      ))),
-    ///  }),
-    ///  config_resource: Box::new(RemoteResource::new(
-    ///      "https://huggingface.co/optimum/gpt2/resolve/main/config.json",
-    ///      "onnx-gpt2",
-    ///  )),
-    ///  vocab_resource: Box::new(RemoteResource::new(
-    ///      "https://huggingface.co/gpt2/resolve/main/vocab.json",
-    ///      "onnx-gpt2",
-    ///  )),
-    ///  merges_resource: Some(Box::new(RemoteResource::new(
-    ///      "https://huggingface.co/gpt2/resolve/main/merges.txt",
-    ///      "onnx-gpt2",
-    ///  ))),
-    ///  ..Default::default()
-    /// };
-    /// let environment = Some(Arc::new(Environment::default()));
-    /// let onnx_config = Some(ONNXEnvironmentConfig::default());
-    /// let onnx_causal_generator =
-    ///  ONNXCausalGenerator::new(generate_config, environment.as_ref(), onnx_config.as_ref())
-    ///      .unwrap();
-    /// let past = Cache::None;
-    /// let (batch_size, sequence_length) = (64, 128);
-    /// let device = Device::cuda_if_available();
-    /// let input_tensor = Tensor::rand(&[batch_size, sequence_length], (Int64, device));
-    /// let attention_mask = Tensor::zeros(&[batch_size, sequence_length], (Int64, device));
-    /// let token_type_ids = Tensor::ones(&[batch_size, sequence_length], (Int64, device));
-    /// let position_ids = Tensor::arange(sequence_length, (Int64, device))
-    ///  .expand(&[batch_size, sequence_length], true);
-    ///
-    /// let model_output = onnx_causal_generator
-    ///  .forward(
-    ///      Some(&input_tensor),
-    ///      Some(&attention_mask),
-    ///      None,
-    ///      None,
-    ///      Some(&position_ids),
-    ///      Some(&past),
-    ///  )
-    ///  .unwrap();
-    /// ```
     pub fn forward(
         &self,
-        input_ids: Option<&Tensor>,
-        attention_mask: Option<&Tensor>,
-        encoder_hidden_states: Option<&Tensor>,
-        encoder_attention_mask: Option<&Tensor>,
-        position_ids: Option<&Tensor>,
+        input_ids: Option<&ArrayD<i64>>,
+        attention_mask: Option<&ArrayD<i64>>,
+        encoder_hidden_states: Option<&ArrayD<f32>>,
+        encoder_attention_mask: Option<&ArrayD<i64>>,
+        position_ids: Option<&ArrayD<i64>>,
         layer_states: Option<&Cache>,
     ) -> Result<LMModelOutput, RustBertError> {
         match (
@@ -427,6 +345,7 @@ impl ONNXCausalGenerator {
     }
 }
 
+#[cfg(feature = "libtorch")]
 impl PrivateLanguageGenerator for ONNXCausalGenerator {
     fn _get_tokenizer(&self) -> &TokenizerOption {
         &self.tokenizer
@@ -434,10 +353,10 @@ impl PrivateLanguageGenerator for ONNXCausalGenerator {
     fn _get_tokenizer_mut(&mut self) -> &mut TokenizerOption {
         &mut self.tokenizer
     }
-    fn get_device(&self) -> Device {
-        Device::Cpu
+    fn get_device(&self) -> tch::Device {
+        tch::Device::Cpu
     }
-    fn get_var_store_mut(&mut self) -> Result<&mut nn::VarStore, RustBertError> {
+    fn get_var_store_mut(&mut self) -> Result<&mut tch::nn::VarStore, RustBertError> {
         Err(RustBertError::ValueError(
             "No VarStore available for ONNX models".to_string(),
         ))
@@ -475,35 +394,41 @@ impl PrivateLanguageGenerator for ONNXCausalGenerator {
 
     fn forward_t(
         &self,
-        input_ids: Option<&Tensor>,
+        input_ids: Option<&tch::Tensor>,
         layer_past: Cache,
-        attention_mask: Option<&Tensor>,
-        _token_type_ids: Option<&Tensor>,
-        position_ids: Option<&Tensor>,
-        _input_embeds: Option<&Tensor>,
-        _encoder_outputs: Option<&Tensor>,
-        _decoder_input_ids: Option<&Tensor>,
+        attention_mask: Option<&tch::Tensor>,
+        _token_type_ids: Option<&tch::Tensor>,
+        position_ids: Option<&tch::Tensor>,
+        _input_embeds: Option<&tch::Tensor>,
+        _encoder_outputs: Option<&tch::Tensor>,
+        _decoder_input_ids: Option<&tch::Tensor>,
         _train: bool,
     ) -> Result<LMModelOutput, RustBertError> {
+        let input_ids = input_ids.map(tensor_to_array_i64).transpose()?;
+        let attention_mask = attention_mask.map(tensor_to_array_i64).transpose()?;
+        let position_ids = position_ids.map(tensor_to_array_i64).transpose()?;
         self.forward(
-            input_ids,
-            attention_mask,
+            input_ids.as_ref(),
+            attention_mask.as_ref(),
             None,
             None,
-            position_ids,
+            position_ids.as_ref(),
             Some(&layer_past),
         )
     }
 
     fn prepare_inputs_for_generation<'a>(
         &self,
-        input_ids: Tensor,
-        _encoder_outputs: Option<&'a Tensor>,
+        input_ids: tch::Tensor,
+        _encoder_outputs: Option<&'a tch::Tensor>,
         past: Cache,
-        attention_mask: Tensor,
+        attention_mask: tch::Tensor,
     ) -> PreparedInput<'a> {
-        let position_ids = (attention_mask.totype(Kind::Int64).cumsum(-1, Kind::Int64) - 1)
-            .masked_fill(&attention_mask.eq(0), 1);
+        let position_ids = (attention_mask
+            .totype(tch::Kind::Int64)
+            .cumsum(-1, tch::Kind::Int64)
+            - 1)
+        .masked_fill(&attention_mask.eq(0), 1);
 
         match (past, self.use_past) {
             (Cache::ONNXCache(past), true) => PreparedInput {
@@ -528,13 +453,14 @@ impl PrivateLanguageGenerator for ONNXCausalGenerator {
     fn reorder_cache(
         &self,
         past: &mut Cache,
-        _encoder_outputs: Option<Tensor>,
-        beam_indices: &Tensor,
-    ) -> Option<Tensor> {
+        _encoder_outputs: Option<tch::Tensor>,
+        beam_indices: &tch::Tensor,
+    ) -> Option<tch::Tensor> {
+        let beam_indices = tensor_to_vec_i64(beam_indices).expect("Error converting beam indices");
         match past {
             Cache::ONNXCache(cached_decoder_state) => {
-                for (_, layer_past) in cached_decoder_state.values.iter_mut() {
-                    *layer_past = layer_past.index_select(0, beam_indices);
+                for layer_past in cached_decoder_state.values.values_mut() {
+                    *layer_past = crate::common::tensor_ops::gather_rows(layer_past, &beam_indices);
                 }
                 None
             }
@@ -546,6 +472,7 @@ impl PrivateLanguageGenerator for ONNXCausalGenerator {
     }
 }
 
+#[cfg(feature = "libtorch")]
 impl LanguageGenerator for ONNXCausalGenerator {}
 
 /// # ONNX Conditional Generator
@@ -578,7 +505,7 @@ impl ONNXConditionalGenerator {
     ///
     /// Extract the required model, tokenizer and configuration resources from a `GenerateConfig`.
     /// Note that the `model_resources` field of the `GenerateConfig` provided should be of the
-    /// `ModelResources::ONNX` type, passing a `ModelResources::ONNX` resource will cause the model
+    /// `ModelResources::ONNX` type, passing a `ModelResources::Torch` resource will cause the model
     /// to fail.
     ///
     /// The tokenizer is automatically created based on the `model_type` field of the `GenerateConfig`.
@@ -588,13 +515,11 @@ impl ONNXConditionalGenerator {
     /// # Example
     ///
     /// ```no_run
-    /// use ort::Environment;
     /// use rust_bert::pipelines::common::{ModelResource, ModelType, ONNXModelResources};
     /// use rust_bert::pipelines::generation_utils::GenerateConfig;
     /// use rust_bert::pipelines::onnx::config::ONNXEnvironmentConfig;
     /// use rust_bert::pipelines::onnx::ONNXConditionalGenerator;
     /// use rust_bert::resources::RemoteResource;
-    /// use std::sync::Arc;
     /// let generate_config = GenerateConfig {
     ///  model_type: ModelType::M2M100,
     ///  model_resource: ModelResource::ONNX(ONNXModelResources {
@@ -625,15 +550,13 @@ impl ONNXConditionalGenerator {
     ///      ))),
     ///  ..Default::default()
     /// };
-    /// let environment = Some(Arc::new(Environment::default()));
     /// let onnx_config = Some(ONNXEnvironmentConfig::default());
     /// let onnx_conditional_generator =
-    ///  ONNXConditionalGenerator::new(generate_config, environment.as_ref(), onnx_config.as_ref())
+    ///  ONNXConditionalGenerator::new(generate_config, onnx_config.as_ref())
     ///      .unwrap();
     /// ```
     pub fn new(
         generate_config: GenerateConfig,
-        environment: Option<&Arc<Environment>>,
         onnx_config: Option<&ONNXEnvironmentConfig>,
     ) -> Result<Self, RustBertError> {
         let vocab_path = generate_config.vocab_resource.get_local_path()?;
@@ -652,14 +575,14 @@ impl ONNXConditionalGenerator {
             None,
         )?;
 
-        Self::new_with_tokenizer(generate_config, tokenizer, environment, onnx_config)
+        Self::new_with_tokenizer(generate_config, tokenizer, onnx_config)
     }
 
     /// Create a new `ONNXConditionalGenerator` from a `GenerateConfig` and `TokenizerOption`.
     ///
     /// Extract the required model and configuration resources from a `GenerateConfig`.
     /// Note that the `model_resources` field of the `GenerateConfig` provided should be of the
-    /// `ModelResources::ONNX` type, passing a `ModelResources::ONNX` resource will cause the model
+    /// `ModelResources::ONNX` type, passing a `ModelResources::Torch` resource will cause the model
     /// to fail.
     ///
     /// A tokenizer must be provided by the user and can be customized to use non-default settings.
@@ -667,7 +590,6 @@ impl ONNXConditionalGenerator {
     /// # Example
     ///
     /// ```no_run
-    /// use ort::Environment;
     /// use rust_bert::pipelines::common::{
     ///  ModelResource, ModelType, ONNXModelResources, TokenizerOption,
     /// };
@@ -675,7 +597,6 @@ impl ONNXConditionalGenerator {
     /// use rust_bert::pipelines::onnx::config::ONNXEnvironmentConfig;
     /// use rust_bert::pipelines::onnx::ONNXConditionalGenerator;
     /// use rust_bert::resources::RemoteResource;
-    /// use std::sync::Arc;
     /// let generate_config = GenerateConfig {
     ///  model_resource: ModelResource::ONNX(ONNXModelResources {
     ///           encoder_resource: Some(Box::new(RemoteResource::new(
@@ -697,7 +618,6 @@ impl ONNXConditionalGenerator {
     ///      )),
     ///  ..Default::default()
     /// };
-    /// let environment = Some(Arc::new(Environment::default()));
     /// let onnx_config = Some(ONNXEnvironmentConfig::default());
     /// let lower_case = false;
     /// let strip_accents = None;
@@ -714,7 +634,6 @@ impl ONNXConditionalGenerator {
     /// let onnx_conditional_generator = ONNXConditionalGenerator::new_with_tokenizer(
     ///  generate_config,
     ///  tokenizer,
-    ///  environment.as_ref(),
     ///  onnx_config.as_ref(),
     /// )
     /// .unwrap();
@@ -722,7 +641,6 @@ impl ONNXConditionalGenerator {
     pub fn new_with_tokenizer(
         generate_config: GenerateConfig,
         tokenizer: TokenizerOption,
-        environment: Option<&Arc<Environment>>,
         onnx_config: Option<&ONNXEnvironmentConfig>,
     ) -> Result<Self, RustBertError> {
         let config_path = generate_config.config_resource.get_local_path()?;
@@ -739,39 +657,26 @@ impl ONNXConditionalGenerator {
             return Err(RustBertError::InvalidConfigurationError("Must provide at least one of `decoder_without_past_file`, `decoder_with_past_file`, both set to None".to_string()));
         }
 
-        let default_onnx_config = if onnx_config.is_none() {
-            Some(ONNXEnvironmentConfig::from_device(generate_config.device))
-        } else {
-            None
+        let default_onnx_config;
+        let onnx_config = match onnx_config {
+            Some(onnx_config) => onnx_config,
+            None => {
+                default_onnx_config =
+                    ONNXEnvironmentConfig::from_device(crate::Device::from(generate_config.device));
+                &default_onnx_config
+            }
         };
-        let onnx_config = onnx_config.unwrap_or_else(|| default_onnx_config.as_ref().unwrap());
 
-        let local_environment = if environment.is_none() {
-            Some(onnx_config.get_environment()?)
-        } else {
-            None
-        };
-        let environment = environment.unwrap_or_else(|| local_environment.as_ref().unwrap());
         let encoder_file = encoder_file.ok_or(RustBertError::InvalidConfigurationError(format!("ONNXConditionalGenerator requires an `encoder_path` to be provided in the `ModelResources`, got {:?}", generate_config.model_resource)))?;
 
-        let encoder = ONNXEncoder::new(encoder_file, environment, onnx_config)?;
+        let encoder = ONNXEncoder::new(encoder_file, onnx_config)?;
         let decoder_without_past = if let Some(model_file) = decoder_without_past_file {
-            Some(ONNXDecoder::new(
-                model_file,
-                true,
-                environment,
-                onnx_config,
-            )?)
+            Some(ONNXDecoder::new(model_file, true, onnx_config)?)
         } else {
             None
         };
         let decoder_with_past = if let Some(model_file) = decoder_with_past_file {
-            Some(ONNXDecoder::new(
-                model_file,
-                true,
-                environment,
-                onnx_config,
-            )?)
+            Some(ONNXDecoder::new(model_file, true, onnx_config)?)
         } else {
             None
         };
@@ -810,94 +715,25 @@ impl ONNXConditionalGenerator {
     ///
     /// # Arguments
     ///
-    /// * `input_ids` - Optional input tensor of shape (*batch size*, *sequence_length*). If None, pre-computed embeddings must be provided (see `input_embeds`)
+    /// * `input_ids` - Optional input array of shape (*batch size*, *sequence_length*). If None, pre-computed embeddings must be provided (see `input_embeds`)
     /// * `attention_mask` -  Optional attention mask of shape (*batch size*, *target_sequence_length*) for the decoder positions. Positions with a mask with value 0 will be masked.
-    /// * `encoder_hidden_states` - Optional tensor of shape (*batch size*, *source_sequence_length*, *encoder_hidden_dim*). These correspond to the encoder last hidden state.
+    /// * `encoder_hidden_states` - Optional array of shape (*batch size*, *source_sequence_length*, *encoder_hidden_dim*). These correspond to the encoder last hidden state.
     /// * `encoder_attention_mask` - Optional mask of shape (*batch size*, *sequence_length*) for the encoder hidden states. Masked position have value 0, non-masked value 1. If None set to 1
-    /// * `decoder_input_ids` - Optional input tensor of shape (*batch size*, *target_sequence_length*). Must be provided when running in generation mode (e.g. initialized with a BOS token)
+    /// * `decoder_input_ids` - Optional input array of shape (*batch size*, *target_sequence_length*). Must be provided when running in generation mode (e.g. initialized with a BOS token)
     /// * `layer_states` - Optional `Cache` container containing the past keys and values. When provided, these are concatenated with the current input keys and values.
     ///
     /// # Returns
     ///
     /// * `LMModelOutput` containing:
-    ///   - `lm_logits` - `Tensor` of shape (*batch size*, *sequence_length*, *vocab_size*) representing the activations of the last hidden state
+    ///   - `lm_logits` - logits of shape (*batch size*, *sequence_length*, *vocab_size*) representing the activations of the last hidden state
     ///   - `cache` - `Cache`  containing the past keys and values of each layer.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use ort::Environment;
-    /// use rust_bert::pipelines::common::{ModelResource, ModelType, ONNXModelResources};
-    /// use rust_bert::pipelines::generation_utils::{Cache, GenerateConfig};
-    /// use rust_bert::pipelines::onnx::config::ONNXEnvironmentConfig;
-    /// use rust_bert::pipelines::onnx::ONNXConditionalGenerator;
-    /// use rust_bert::resources::RemoteResource;
-    /// use std::sync::Arc;
-    /// use tch::Kind::{Float, Int64};
-    /// use tch::{Device, Tensor};
-    /// let generate_config = GenerateConfig {
-    ///  model_type: ModelType::M2M100,
-    ///  model_resource: ModelResource::ONNX(ONNXModelResources {
-    ///           encoder_resource: Some(Box::new(RemoteResource::new(
-    ///              "https://huggingface.co/optimum/m2m100_418M/resolve/main/encoder_model.onnx",
-    ///              "onnx-m2m100_418M",
-    ///          ))),
-    ///          decoder_resource: Some(Box::new(RemoteResource::new(
-    ///              "https://huggingface.co/optimum/m2m100_418M/resolve/main/decoder_model.onnx",
-    ///              "onnx-m2m100_418M",
-    ///          ))),
-    ///          decoder_with_past_resource: Some(Box::new(RemoteResource::new(
-    ///              "https://huggingface.co/optimum/m2m100_418M/resolve/main/decoder_with_past_model.onnx",
-    ///              "onnx-m2m100_418M",
-    ///          ))),
-    ///      }),
-    ///      config_resource: Box::new(RemoteResource::new(
-    ///          "https://huggingface.co/optimum/m2m100_418M/resolve/main/config.json",
-    ///          "onnx-m2m100_418M",
-    ///      )),
-    ///      vocab_resource: Box::new(RemoteResource::new(
-    ///          "https://huggingface.co/optimum/m2m100_418M/resolve/main/vocab.json",
-    ///          "onnx-m2m100_418M",
-    ///      )),
-    ///      merges_resource: Some(Box::new(RemoteResource::new(
-    ///          "https://huggingface.co/optimum/m2m100_418M/resolve/main/sentencepiece.bpe.model",
-    ///          "onnx-m2m100_418M",
-    ///      ))),
-    ///  ..Default::default()
-    /// };
-    /// let environment = Some(Arc::new(Environment::default()));
-    /// let onnx_config = Some(ONNXEnvironmentConfig::default());
-    /// let onnx_conditional_generator =
-    ///  ONNXConditionalGenerator::new(generate_config, environment.as_ref(), onnx_config.as_ref())
-    ///      .unwrap();
-    /// let device = Device::cuda_if_available();
-    /// let past = Cache::None;
-    /// let device = Device::cuda_if_available();
-    /// let (batch_size, source_sequence_length, target_sequence_length, hidden_state_dim) = (64, 128, 56, 512);
-    /// let input_tensor = Tensor::rand(&[batch_size, source_sequence_length], (Int64, device));
-    /// let target_tensor = Tensor::rand(&[batch_size, target_sequence_length], (Int64, device));
-    /// let attention_mask = Tensor::ones(&[batch_size, source_sequence_length], (Int64, device));
-    /// let encoder_hidden_states = Tensor::zeros(&[batch_size, source_sequence_length, hidden_state_dim], (Float, device));
-    /// let encoder_attention_mask = Tensor::ones(&[batch_size, source_sequence_length], (Int64, device));
-    ///
-    /// let model_output = onnx_conditional_generator
-    ///  .forward(
-    ///      Some(&input_tensor),
-    ///      Some(&attention_mask),
-    ///      Some(&encoder_hidden_states),
-    ///      Some(&encoder_attention_mask),
-    ///      Some(&target_tensor),
-    ///      Some(&past),
-    ///  )
-    ///  .unwrap();
-    /// ```
     pub fn forward(
         &self,
-        input_ids: Option<&Tensor>,
-        attention_mask: Option<&Tensor>,
-        encoder_hidden_states: Option<&Tensor>,
-        encoder_attention_mask: Option<&Tensor>,
-        decoder_input_ids: Option<&Tensor>,
+        input_ids: Option<&ArrayD<i64>>,
+        attention_mask: Option<&ArrayD<i64>>,
+        encoder_hidden_states: Option<&ArrayD<f32>>,
+        encoder_attention_mask: Option<&ArrayD<i64>>,
+        decoder_input_ids: Option<&ArrayD<i64>>,
         layer_states: Option<&Cache>,
     ) -> Result<LMModelOutput, RustBertError> {
         let calc_encoder_output = if encoder_hidden_states.is_none() {
@@ -916,9 +752,8 @@ impl ONNXConditionalGenerator {
             encoder_hidden_states.unwrap_or_else(|| calc_encoder_output.as_ref().unwrap());
 
         let calc_encoder_attention_mask = if encoder_attention_mask.is_none() {
-            Some(Tensor::ones(
-                &encoder_hidden_states.size()[..2],
-                (Kind::Int64, encoder_hidden_states.device()),
+            Some(crate::common::tensor_ops::ones_i64(
+                &encoder_hidden_states.shape()[..2],
             ))
         } else {
             None
@@ -975,6 +810,7 @@ impl ONNXConditionalGenerator {
     }
 }
 
+#[cfg(feature = "libtorch")]
 impl PrivateLanguageGenerator for ONNXConditionalGenerator {
     fn _get_tokenizer(&self) -> &TokenizerOption {
         &self.tokenizer
@@ -982,10 +818,10 @@ impl PrivateLanguageGenerator for ONNXConditionalGenerator {
     fn _get_tokenizer_mut(&mut self) -> &mut TokenizerOption {
         &mut self.tokenizer
     }
-    fn get_device(&self) -> Device {
-        Device::Cpu
+    fn get_device(&self) -> tch::Device {
+        tch::Device::Cpu
     }
-    fn get_var_store_mut(&mut self) -> Result<&mut nn::VarStore, RustBertError> {
+    fn get_var_store_mut(&mut self) -> Result<&mut tch::nn::VarStore, RustBertError> {
         Err(RustBertError::ValueError(
             "No VarStore available for ONNX models".to_string(),
         ))
@@ -1023,39 +859,50 @@ impl PrivateLanguageGenerator for ONNXConditionalGenerator {
 
     fn forward_t(
         &self,
-        input_ids: Option<&Tensor>,
+        input_ids: Option<&tch::Tensor>,
         layer_past: Cache,
-        attention_mask: Option<&Tensor>,
-        _token_type_ids: Option<&Tensor>,
-        _position_ids: Option<&Tensor>,
-        _input_embeds: Option<&Tensor>,
-        encoder_outputs: Option<&Tensor>,
-        decoder_input_ids: Option<&Tensor>,
+        attention_mask: Option<&tch::Tensor>,
+        _token_type_ids: Option<&tch::Tensor>,
+        _position_ids: Option<&tch::Tensor>,
+        _input_embeds: Option<&tch::Tensor>,
+        encoder_outputs: Option<&tch::Tensor>,
+        decoder_input_ids: Option<&tch::Tensor>,
         _train: bool,
     ) -> Result<LMModelOutput, RustBertError> {
+        let input_ids = input_ids.map(tensor_to_array_i64).transpose()?;
+        let attention_mask = attention_mask.map(tensor_to_array_i64).transpose()?;
+        let encoder_outputs = encoder_outputs.map(tensor_to_array_f32).transpose()?;
+        let decoder_input_ids = decoder_input_ids.map(tensor_to_array_i64).transpose()?;
         self.forward(
-            input_ids,
-            attention_mask,
-            encoder_outputs,
+            input_ids.as_ref(),
+            attention_mask.as_ref(),
+            encoder_outputs.as_ref(),
             None,
-            decoder_input_ids,
+            decoder_input_ids.as_ref(),
             Some(&layer_past),
         )
     }
 
-    fn encode(&self, input_ids: &Tensor, attention_mask: Option<&Tensor>) -> Option<Tensor> {
+    fn encode(
+        &self,
+        input_ids: &tch::Tensor,
+        attention_mask: Option<&tch::Tensor>,
+    ) -> Option<tch::Tensor> {
+        let input_ids = tensor_to_array_i64(input_ids).ok()?;
+        let attention_mask = attention_mask.map(tensor_to_array_i64).transpose().ok()?;
         self.encoder
-            .forward(Some(input_ids), attention_mask, None, None, None)
-            .unwrap()
+            .forward(Some(&input_ids), attention_mask.as_ref(), None, None, None)
+            .ok()?
             .last_hidden_state
+            .map(|array| array_to_tensor_f32(&array).expect("Error converting encoder output"))
     }
 
     fn prepare_inputs_for_generation<'a>(
         &self,
-        input_ids: Tensor,
-        encoder_outputs: Option<&'a Tensor>,
+        input_ids: tch::Tensor,
+        encoder_outputs: Option<&'a tch::Tensor>,
         past: Cache,
-        attention_mask: Tensor,
+        attention_mask: tch::Tensor,
     ) -> PreparedInput<'a> {
         match (past, self.use_past) {
             (Cache::ONNXCache(past), true) => PreparedInput {
@@ -1080,14 +927,17 @@ impl PrivateLanguageGenerator for ONNXConditionalGenerator {
     fn reorder_cache(
         &self,
         past: &mut Cache,
-        encoder_outputs: Option<Tensor>,
-        beam_indices: &Tensor,
-    ) -> Option<Tensor> {
-        let encoder_outputs = encoder_outputs.map(|value| value.index_select(0, beam_indices));
+        encoder_outputs: Option<tch::Tensor>,
+        beam_indices: &tch::Tensor,
+    ) -> Option<tch::Tensor> {
+        let beam_indices = tensor_to_vec_i64(beam_indices).expect("Error converting beam indices");
+        let beam_indices_tensor = tch::Tensor::from_slice(&beam_indices);
+        let encoder_outputs =
+            encoder_outputs.map(|value| value.index_select(0, &beam_indices_tensor));
         match past {
             Cache::ONNXCache(cached_decoder_state) => {
-                for (_, layer_past) in cached_decoder_state.values.iter_mut() {
-                    *layer_past = layer_past.index_select(0, beam_indices);
+                for layer_past in cached_decoder_state.values.values_mut() {
+                    *layer_past = crate::common::tensor_ops::gather_rows(layer_past, &beam_indices);
                 }
             }
             Cache::None => {}
@@ -1099,30 +949,27 @@ impl PrivateLanguageGenerator for ONNXConditionalGenerator {
     }
 }
 
+#[cfg(feature = "libtorch")]
 impl LanguageGenerator for ONNXConditionalGenerator {}
 
 #[derive(Debug)]
 /// Container used to store key-value cached states for efficient decoding.
 pub struct ONNXLayerCache {
-    pub values: HashMap<String, Tensor>,
+    pub values: HashMap<String, ArrayD<f32>>,
 }
 
 impl ONNXLayerCache {
     /// Helper function to create a cache layer from an ONNX model output.
     /// Assumes that the output names for cached keys and values contain `key` and `value` in their name, respectively.
     pub fn from_ort_output(
-        ort_output: &[Value],
+        ort_output: &SessionOutputs,
         key_value_names: &HashMap<String, usize>,
     ) -> Result<ONNXLayerCache, RustBertError> {
-        let values = key_value_names
-            .iter()
-            .filter(|(name, _)| name.contains("key") | name.contains("value"))
-            .map(|(name, pos)| {
-                let value = &ort_output[*pos];
-                Ok((name.to_string(), conversion::ort_tensor_to_tch(value)?))
-            })
-            .collect::<Result<HashMap<String, Tensor>, RustBertError>>()?;
-
-        Ok(ONNXLayerCache { values })
+        Ok(ONNXLayerCache {
+            values: crate::pipelines::onnx::conversion::key_values_from_outputs(
+                ort_output,
+                key_value_names,
+            )?,
+        })
     }
 }

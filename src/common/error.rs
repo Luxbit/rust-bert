@@ -1,8 +1,7 @@
 #[cfg(feature = "onnx")]
 use ndarray::ShapeError;
-#[cfg(feature = "onnx")]
-use ort::OrtError;
 use rust_tokenizers::error::TokenizerError;
+#[cfg(feature = "libtorch")]
 use tch::TchError;
 use thiserror::Error;
 
@@ -51,6 +50,7 @@ impl From<TokenizerError> for RustBertError {
     }
 }
 
+#[cfg(feature = "libtorch")]
 impl From<TchError> for RustBertError {
     fn from(error: TchError) -> Self {
         RustBertError::TchError(error.to_string())
@@ -58,8 +58,8 @@ impl From<TchError> for RustBertError {
 }
 
 #[cfg(feature = "onnx")]
-impl From<OrtError> for RustBertError {
-    fn from(error: OrtError) -> Self {
+impl<R> From<ort::Error<R>> for RustBertError {
+    fn from(error: ort::Error<R>) -> Self {
         RustBertError::OrtError(error.to_string())
     }
 }

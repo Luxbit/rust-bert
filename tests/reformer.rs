@@ -1,3 +1,4 @@
+#![cfg(feature = "libtorch")]
 use rust_bert::pipelines::common::{ModelResource, ModelType};
 use rust_bert::pipelines::text_generation::{TextGenerationConfig, TextGenerationModel};
 use rust_bert::reformer::{

@@ -11,6 +11,12 @@
 // limitations under the License.
 
 fn main() {
+    // The libtorch link flags below are only required when the `tch` (LibTorch)
+    // backend is enabled; ONNX-only builds must not link against libtorch.
+    if std::env::var_os("CARGO_FEATURE_LIBTORCH").is_none() {
+        return;
+    }
+
     let os = std::env::var("CARGO_CFG_TARGET_OS").expect("Unable to get TARGET_OS");
     match os.as_str() {
         "linux" | "windows" => {

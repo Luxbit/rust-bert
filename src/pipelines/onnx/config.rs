@@ -1,11 +1,9 @@
-/// # Configuration for ONNX environment and sessions
+/// # Configuration for ONNX sessions
 use crate::RustBertError;
-use ort::execution_providers::{CPUExecutionProviderOptions, CUDAExecutionProviderOptions};
-use ort::{
-    AllocatorType, Environment, ExecutionProvider, GraphOptimizationLevel, MemType, SessionBuilder,
-};
-use std::sync::Arc;
-use tch::Device;
+use ort::session::builder::GraphOptimizationLevel;
+use ort::session::builder::SessionBuilder;
+use ort::session::Session;
+use ort::{ep, ep::ExecutionProviderDispatch};
 
 pub(crate) static INPUT_IDS_NAME: &str = "input_ids";
 pub(crate) static ATTENTION_MASK_NAME: &str = "attention_mask";
@@ -20,33 +18,35 @@ pub(crate) static START_LOGITS: &str = "start_logits";
 pub(crate) static END_LOGITS: &str = "end_logits";
 
 #[derive(Default)]
-/// # ONNX Environment configuration
+/// # ONNX environment configuration
 /// See <https://onnxruntime.ai/docs/api/python/api_summary.html#sessionoptions>
 pub struct ONNXEnvironmentConfig {
     pub optimization_level: Option<GraphOptimizationLevel>,
-    pub execution_providers: Option<Vec<ExecutionProvider>>,
-    pub num_intra_threads: Option<i16>,
-    pub num_inter_threads: Option<i16>,
+    pub execution_providers: Option<Vec<ExecutionProviderDispatch>>,
+    pub num_intra_threads: Option<usize>,
+    pub num_inter_threads: Option<usize>,
     pub parallel_execution: Option<bool>,
     pub enable_memory_pattern: Option<bool>,
-    pub allocator: Option<AllocatorType>,
-    pub memory_type: Option<MemType>,
 }
 
 impl ONNXEnvironmentConfig {
-    /// Create a new `ONNXEnvironmentConfig` from a `tch::Device`.
-    /// This helper function maps torch device to ONNXRuntime execution providers
-    pub fn from_device(device: Device) -> Self {
+    /// Create a new `ONNXEnvironmentConfig` from a `rust_bert::Device`.
+    /// This helper function maps the device to the ONNX Runtime execution providers.
+    ///
+    /// Note that using a CUDA device requires the `cuda` feature of this crate (which enables
+    /// the `cuda` feature of the `ort` dependency and links the CUDA execution provider).
+    /// Without this feature, CUDA devices fall back to CPU execution.
+    pub fn from_device(device: crate::Device) -> Self {
         let mut execution_providers = Vec::new();
-        if let Device::Cuda(device) = device {
-            execution_providers.push(ExecutionProvider::CUDA(CUDAExecutionProviderOptions {
-                device_id: device as u32,
-                ..Default::default()
-            }));
+        if let Some(device_id) = device.cuda_device_id() {
+            #[cfg(feature = "cuda")]
+            execution_providers.push(ep::CUDA::default().with_device_id(device_id as i32).build());
+            #[cfg(not(feature = "cuda"))]
+            {
+                let _ = device_id;
+            }
         };
-        execution_providers.push(ExecutionProvider::CPU(
-            CPUExecutionProviderOptions::default(),
-        ));
+        execution_providers.push(ep::CPU::default().build());
         ONNXEnvironmentConfig {
             execution_providers: Some(execution_providers),
             ..Default::default()
@@ -54,25 +54,10 @@ impl ONNXEnvironmentConfig {
     }
 
     ///Build a session builder from an `ONNXEnvironmentConfig`.
-    pub fn get_session_builder(
-        &self,
-        environment: &Arc<Environment>,
-    ) -> Result<SessionBuilder, RustBertError> {
-        let mut session_builder = SessionBuilder::new(environment)?;
-        match &self.optimization_level {
-            Some(GraphOptimizationLevel::Level3) | None => {}
-            Some(GraphOptimizationLevel::Level2) => {
-                session_builder =
-                    session_builder.with_optimization_level(GraphOptimizationLevel::Level2)?
-            }
-            Some(GraphOptimizationLevel::Level1) => {
-                session_builder =
-                    session_builder.with_optimization_level(GraphOptimizationLevel::Level1)?
-            }
-            Some(GraphOptimizationLevel::Disable) => {
-                session_builder =
-                    session_builder.with_optimization_level(GraphOptimizationLevel::Disable)?
-            }
+    pub fn get_session_builder(&self) -> Result<SessionBuilder, RustBertError> {
+        let mut session_builder = Session::builder()?;
+        if let Some(optimization_level) = self.optimization_level {
+            session_builder = session_builder.with_optimization_level(optimization_level)?;
         }
         if let Some(num_intra_threads) = self.num_intra_threads {
             session_builder = session_builder.with_intra_threads(num_intra_threads)?;
@@ -86,24 +71,9 @@ impl ONNXEnvironmentConfig {
         if let Some(enable_memory_pattern) = self.enable_memory_pattern {
             session_builder = session_builder.with_memory_pattern(enable_memory_pattern)?;
         }
-        if let Some(allocator) = &self.allocator {
-            session_builder = session_builder.with_allocator(*allocator)?;
-        }
-        if let Some(memory_type) = &self.memory_type {
-            session_builder = session_builder.with_memory_type(*memory_type)?;
+        if let Some(execution_providers) = &self.execution_providers {
+            session_builder = session_builder.with_execution_providers(execution_providers)?;
         }
         Ok(session_builder)
-    }
-
-    ///Build an ONNXEnvironment from an `ONNXEnvironmentConfig`.
-    pub fn get_environment(&self) -> Result<Arc<Environment>, RustBertError> {
-        Ok(Arc::new(
-            Environment::builder()
-                .with_name("Default environment")
-                .with_execution_providers(self.execution_providers.clone().unwrap_or(vec![
-                    ExecutionProvider::CPU(CPUExecutionProviderOptions::default()),
-                ]))
-                .build()?,
-        ))
     }
 }

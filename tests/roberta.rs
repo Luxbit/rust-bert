@@ -1,3 +1,4 @@
+#![cfg(feature = "libtorch")]
 use rust_bert::pipelines::common::{ModelResource, ModelType};
 use rust_bert::pipelines::ner::NERModel;
 use rust_bert::pipelines::question_answering::{

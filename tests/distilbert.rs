@@ -1,3 +1,4 @@
+#![cfg(feature = "libtorch")]
 use rust_bert::distilbert::{
     DistilBertConfig, DistilBertConfigResources, DistilBertForQuestionAnswering,
     DistilBertForTokenClassification, DistilBertModelMaskedLM, DistilBertModelResources,

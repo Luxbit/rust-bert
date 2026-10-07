@@ -1,3 +1,4 @@
+#![cfg(feature = "libtorch")]
 use rust_bert::pipelines::summarization::{SummarizationConfig, SummarizationModel};
 
 use rust_bert::pipelines::common::{ModelResource, ModelType};

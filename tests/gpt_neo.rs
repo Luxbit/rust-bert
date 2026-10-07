@@ -1,3 +1,4 @@
+#![cfg(feature = "libtorch")]
 use rust_bert::gpt_neo::{
     GptNeoConfig, GptNeoConfigResources, GptNeoForCausalLM, GptNeoMergesResources,
     GptNeoModelResources, GptNeoVocabResources,

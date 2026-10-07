@@ -1,3 +1,4 @@
+#![cfg(feature = "libtorch")]
 use rust_bert::deberta::{
     DebertaConfig, DebertaConfigResources, DebertaForMaskedLM, DebertaForQuestionAnswering,
     DebertaForSequenceClassification, DebertaForTokenClassification, DebertaMergesResources,

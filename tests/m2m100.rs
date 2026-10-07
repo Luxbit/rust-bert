@@ -1,3 +1,4 @@
+#![cfg(feature = "libtorch")]
 use rust_bert::m2m_100::{
     M2M100Config, M2M100ConfigResources, M2M100MergesResources, M2M100Model, M2M100ModelResources,
     M2M100SourceLanguages, M2M100TargetLanguages, M2M100VocabResources,

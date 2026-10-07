@@ -10,7 +10,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::bart::{BartDecoderOutput, _expand_mask, _prepare_decoder_attention_mask};
+use crate::bart::{_expand_mask, _prepare_decoder_attention_mask, BartDecoderOutput};
 use crate::common::dropout::Dropout;
 use crate::mbart::MBartDecoderLayer;
 use crate::pegasus::attention::LayerState;

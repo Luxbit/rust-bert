@@ -29,7 +29,9 @@ use std::fmt::Debug;
 use std::ops::DerefMut;
 use std::path::PathBuf;
 use std::sync::RwLockWriteGuard;
+#[cfg(feature = "libtorch")]
 use tch::nn::VarStore;
+#[cfg(feature = "libtorch")]
 use tch::{Device, Kind};
 
 pub enum Resource<'a> {
@@ -82,6 +84,7 @@ impl<T: ResourceProvider + ?Sized> ResourceProvider for Box<T> {
 }
 
 /// Load the provided `VarStore` with model weights from the provided `ResourceProvider`
+#[cfg(feature = "libtorch")]
 pub fn load_weights(
     rp: &(impl ResourceProvider + ?Sized),
     vs: &mut VarStore,
