@@ -54,15 +54,23 @@
 //! # }
 //! ```
 
+#[cfg(feature = "libtorch")]
 mod attention;
+pub mod config;
+#[cfg(feature = "libtorch")]
 mod distilbert_model;
+#[cfg(feature = "libtorch")]
 mod embeddings;
+#[cfg(feature = "libtorch")]
 mod transformer;
 
+pub use config::{
+    DistilBertConfig, DistilBertConfigResources, DistilBertModelResources, DistilBertVocabResources,
+};
+#[cfg(feature = "libtorch")]
 pub use distilbert_model::{
-    DistilBertConfig, DistilBertConfigResources, DistilBertForQuestionAnswering,
-    DistilBertForSentenceEmbeddings, DistilBertForTokenClassification, DistilBertMaskedLMOutput,
-    DistilBertModel, DistilBertModelClassifier, DistilBertModelMaskedLM, DistilBertModelResources,
-    DistilBertQuestionAnsweringOutput, DistilBertSequenceClassificationOutput,
-    DistilBertTokenClassificationOutput, DistilBertVocabResources,
+    DistilBertForQuestionAnswering, DistilBertForSentenceEmbeddings,
+    DistilBertForTokenClassification, DistilBertMaskedLMOutput, DistilBertModel,
+    DistilBertModelClassifier, DistilBertModelMaskedLM, DistilBertQuestionAnsweringOutput,
+    DistilBertSequenceClassificationOutput, DistilBertTokenClassificationOutput,
 };

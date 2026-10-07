@@ -86,8 +86,9 @@ use crate::pipelines::token_classification::{TokenClassificationConfig, TokenCla
 use serde::{Deserialize, Serialize};
 
 use crate::pipelines::common::TokenizerOption;
-#[cfg(feature = "remote")]
+#[cfg(all(feature = "remote", feature = "libtorch"))]
 use {
+    crate::Device,
     crate::{
         mobilebert::{
             MobileBertConfigResources, MobileBertModelResources, MobileBertVocabResources,
@@ -98,7 +99,6 @@ use {
         },
         resources::RemoteResource,
     },
-    tch::Device,
 };
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -117,7 +117,7 @@ pub struct POSConfig {
     token_classification_config: TokenClassificationConfig,
 }
 
-#[cfg(feature = "remote")]
+#[cfg(all(feature = "remote", feature = "libtorch"))]
 impl Default for POSConfig {
     /// Provides a Part of speech tagging model (English)
     fn default() -> POSConfig {
@@ -138,6 +138,7 @@ impl Default for POSConfig {
                 strip_accents: Some(true),
                 add_prefix_space: None,
                 device: Device::cuda_if_available(),
+                #[cfg(feature = "libtorch")]
                 kind: None,
                 label_aggregation_function: LabelAggregationOption::First,
                 batch_size: 64,

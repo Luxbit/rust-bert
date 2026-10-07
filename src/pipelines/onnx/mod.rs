@@ -107,9 +107,12 @@
 mod common;
 pub mod config;
 mod conversion;
+#[cfg(feature = "libtorch")]
 mod decoder;
 mod encoder;
 mod models;
 
 pub use encoder::{ONNXEncoder, ONNXEncoderModelOutput};
-pub use models::{ONNXCausalGenerator, ONNXConditionalGenerator, ONNXLayerCache, ONNXModelConfig};
+pub use models::ONNXModelConfig;
+#[cfg(feature = "libtorch")]
+pub use models::{ONNXCausalGenerator, ONNXConditionalGenerator, ONNXLayerCache};

@@ -1,6 +1,7 @@
 //! # Torch implementation of language models
 
 pub mod albert;
+#[cfg(feature = "libtorch")]
 pub mod bart;
 pub mod bert;
 pub mod deberta;
@@ -8,20 +9,34 @@ pub mod deberta_v2;
 pub mod distilbert;
 pub mod electra;
 pub mod fnet;
+#[cfg(feature = "libtorch")]
 pub mod gpt2;
+#[cfg(feature = "libtorch")]
 pub mod gpt_j;
+#[cfg(feature = "libtorch")]
 pub mod gpt_neo;
 pub mod longformer;
+#[cfg(feature = "libtorch")]
 pub mod longt5;
+#[cfg(feature = "libtorch")]
 pub mod m2m_100;
+#[cfg(feature = "libtorch")]
 pub mod marian;
+#[cfg(feature = "libtorch")]
 pub mod mbart;
 pub mod mobilebert;
+#[cfg(feature = "libtorch")]
 pub mod nllb;
+#[cfg(feature = "libtorch")]
 pub mod openai_gpt;
+#[cfg(feature = "libtorch")]
 pub mod pegasus;
+#[cfg(feature = "libtorch")]
 pub mod prophetnet;
+#[cfg(feature = "libtorch")]
 pub mod reformer;
+#[cfg(feature = "libtorch")]
 pub mod roberta;
+#[cfg(feature = "libtorch")]
 pub mod t5;
 pub mod xlnet;

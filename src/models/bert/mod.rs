@@ -53,17 +53,25 @@
 //! # }
 //! ```
 
+#[cfg(feature = "libtorch")]
 mod attention;
+#[cfg(feature = "libtorch")]
 mod bert_model;
+pub mod config;
+#[cfg(feature = "libtorch")]
 mod embeddings;
+#[cfg(feature = "libtorch")]
 pub(crate) mod encoder;
 
+#[cfg(feature = "libtorch")]
 pub use bert_model::{
-    BertConfig, BertConfigResources, BertForMaskedLM, BertForMultipleChoice,
-    BertForQuestionAnswering, BertForSentenceEmbeddings, BertForSequenceClassification,
-    BertForTokenClassification, BertMaskedLMOutput, BertModel, BertModelOutput, BertModelResources,
-    BertQuestionAnsweringOutput, BertSequenceClassificationOutput, BertTokenClassificationOutput,
-    BertVocabResources,
+    BertForMaskedLM, BertForMultipleChoice, BertForQuestionAnswering, BertForSentenceEmbeddings,
+    BertForSequenceClassification, BertForTokenClassification, BertMaskedLMOutput, BertModel,
+    BertModelOutput, BertQuestionAnsweringOutput, BertSequenceClassificationOutput,
+    BertTokenClassificationOutput,
 };
+pub use config::{BertConfig, BertConfigResources, BertModelResources, BertVocabResources};
+#[cfg(feature = "libtorch")]
 pub use embeddings::{BertEmbedding, BertEmbeddings};
+#[cfg(feature = "libtorch")]
 pub use encoder::{BertEncoder, BertEncoderOutput, BertLayer, BertLayerOutput, BertPooler};

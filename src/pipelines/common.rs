@@ -17,7 +17,6 @@
 //! pre-processing, forward pass and postprocessing differs between pipelines while basic config and
 //! tokenization objects don't.
 use crate::albert::AlbertConfig;
-use crate::bart::BartConfig;
 use crate::bert::BertConfig;
 use crate::common::error::RustBertError;
 use crate::deberta::DebertaConfig;
@@ -25,25 +24,30 @@ use crate::deberta_v2::DebertaV2Config;
 use crate::distilbert::DistilBertConfig;
 use crate::electra::ElectraConfig;
 use crate::fnet::FNetConfig;
-use crate::gpt2::Gpt2Config;
-use crate::gpt_j::GptJConfig;
-use crate::gpt_neo::GptNeoConfig;
 use crate::longformer::LongformerConfig;
-use crate::longt5::LongT5Config;
-use crate::m2m_100::M2M100Config;
-use crate::marian::MarianConfig;
-use crate::mbart::MBartConfig;
 use crate::mobilebert::MobileBertConfig;
-use crate::openai_gpt::OpenAiGptConfig;
-use crate::pegasus::PegasusConfig;
+#[cfg(feature = "libtorch")]
 use crate::pipelines::translation::Language;
-use crate::prophetnet::ProphetNetConfig;
-use crate::reformer::ReformerConfig;
 use crate::resources::{Resource, ResourceProvider};
-use crate::roberta::RobertaConfig;
-use crate::t5::T5Config;
 use crate::xlnet::XLNetConfig;
 use crate::Config;
+
+#[cfg(feature = "libtorch")]
+mod torch_configs {
+    pub use crate::bart::BartConfig;
+    pub use crate::gpt2::Gpt2Config;
+    pub use crate::gpt_j::GptJConfig;
+    pub use crate::gpt_neo::GptNeoConfig;
+    pub use crate::longt5::LongT5Config;
+    pub use crate::m2m_100::M2M100Config;
+    pub use crate::marian::MarianConfig;
+    pub use crate::mbart::MBartConfig;
+    pub use crate::openai_gpt::OpenAiGptConfig;
+    pub use crate::pegasus::PegasusConfig;
+    pub use crate::prophetnet::ProphetNetConfig;
+    pub use crate::reformer::ReformerConfig;
+    pub use crate::t5::T5Config;
+}
 use rust_tokenizers::tokenizer::{
     AlbertTokenizer, BertTokenizer, DeBERTaTokenizer, DeBERTaV2Tokenizer, FNetTokenizer,
     Gpt2Tokenizer, M2M100Tokenizer, MBart50Tokenizer, MarianTokenizer, MultiThreadedTokenizer,
@@ -59,10 +63,11 @@ use std::convert::TryFrom;
 
 use std::fmt::Debug;
 
+use crate::Device;
+use ndarray::{Array1, Array2, ArrayD};
 use std::path::{Path, PathBuf};
 #[cfg(feature = "libtorch")]
 use tch::nn::VarStore;
-use tch::Device;
 #[cfg(feature = "libtorch")]
 use tch::{Kind, Tensor};
 
@@ -150,16 +155,10 @@ impl ModelResource {
 }
 
 pub(crate) fn get_device(_model_resource: ModelResource, device: Device) -> Device {
-    #[cfg(feature = "onnx")]
-    let updated_device = if let ModelResource::ONNX(_) = _model_resource {
-        Device::Cpu
-    } else {
-        device
-    };
-
-    #[cfg(not(feature = "onnx"))]
-    let updated_device = device;
-    updated_device
+    // ONNX sessions honor the requested device through the matching execution
+    // providers (see `ONNXEnvironmentConfig::from_device`), so the device is
+    // passed through unchanged for both backends.
+    device
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq)]
@@ -205,7 +204,8 @@ pub enum ModelType {
 /// # Abstraction that holds a model configuration, can be of any of the supported models
 pub enum ConfigOption {
     /// Bart configuration
-    Bart(BartConfig),
+    #[cfg(feature = "libtorch")]
+    Bart(torch_configs::BartConfig),
     /// Bert configuration
     Bert(BertConfig),
     /// DistilBert configuration
@@ -217,39 +217,51 @@ pub enum ConfigOption {
     /// Electra configuration
     Electra(ElectraConfig),
     /// Marian configuration
-    Marian(MarianConfig),
+    #[cfg(feature = "libtorch")]
+    Marian(torch_configs::MarianConfig),
     /// MobileBert configuration
     MobileBert(MobileBertConfig),
     /// OpenAI GPT configuration
-    OpenAiGpt(OpenAiGptConfig),
+    #[cfg(feature = "libtorch")]
+    OpenAiGpt(torch_configs::OpenAiGptConfig),
     /// T5 configuration
-    T5(T5Config),
+    #[cfg(feature = "libtorch")]
+    T5(torch_configs::T5Config),
     /// LongT5 configuration
-    LongT5(LongT5Config),
+    #[cfg(feature = "libtorch")]
+    LongT5(torch_configs::LongT5Config),
     /// Albert configuration
     Albert(AlbertConfig),
     /// XLNet configuration
     XLNet(XLNetConfig),
     /// GPT2 configuration
-    GPT2(Gpt2Config),
+    #[cfg(feature = "libtorch")]
+    GPT2(torch_configs::Gpt2Config),
     /// GPT-J configuration
-    GPTJ(GptJConfig),
+    #[cfg(feature = "libtorch")]
+    GPTJ(torch_configs::GptJConfig),
     /// Reformer configuration
-    Reformer(ReformerConfig),
+    #[cfg(feature = "libtorch")]
+    Reformer(torch_configs::ReformerConfig),
     /// RoBERTa configuration
-    Roberta(RobertaConfig),
+    Roberta(BertConfig),
     /// ProphetNet configuration
-    ProphetNet(ProphetNetConfig),
+    #[cfg(feature = "libtorch")]
+    ProphetNet(torch_configs::ProphetNetConfig),
     /// Longformer configuration
     Longformer(LongformerConfig),
     /// Pegasus configuration
-    Pegasus(PegasusConfig),
+    #[cfg(feature = "libtorch")]
+    Pegasus(torch_configs::PegasusConfig),
     /// GPT-Neo configuration
-    GPTNeo(GptNeoConfig),
+    #[cfg(feature = "libtorch")]
+    GPTNeo(torch_configs::GptNeoConfig),
     /// MBart configuration
-    MBart(MBartConfig),
+    #[cfg(feature = "libtorch")]
+    MBart(torch_configs::MBartConfig),
     /// M2M100 configuration
-    M2M100(M2M100Config),
+    #[cfg(feature = "libtorch")]
+    M2M100(torch_configs::M2M100Config),
     /// FNet configuration
     FNet(FNetConfig),
     /// ONNX Model configuration
@@ -307,41 +319,67 @@ impl ConfigOption {
     /// Interface method to load a configuration from file
     pub fn from_file<P: AsRef<Path>>(model_type: ModelType, path: P) -> Self {
         match model_type {
-            ModelType::Bart => ConfigOption::Bart(BartConfig::from_file(path)),
+            #[cfg(feature = "libtorch")]
+            ModelType::Bart => ConfigOption::Bart(torch_configs::BartConfig::from_file(path)),
             ModelType::Bert => ConfigOption::Bert(BertConfig::from_file(path)),
             ModelType::Deberta => ConfigOption::Deberta(DebertaConfig::from_file(path)),
             ModelType::DebertaV2 => ConfigOption::DebertaV2(DebertaV2Config::from_file(path)),
             ModelType::DistilBert => ConfigOption::DistilBert(DistilBertConfig::from_file(path)),
             ModelType::Electra => ConfigOption::Electra(ElectraConfig::from_file(path)),
-            ModelType::Marian => ConfigOption::Marian(MarianConfig::from_file(path)),
+            #[cfg(feature = "libtorch")]
+            ModelType::Marian => ConfigOption::Marian(torch_configs::MarianConfig::from_file(path)),
             ModelType::MobileBert => ConfigOption::MobileBert(MobileBertConfig::from_file(path)),
-            ModelType::T5 => ConfigOption::T5(T5Config::from_file(path)),
-            ModelType::LongT5 => ConfigOption::LongT5(LongT5Config::from_file(path)),
+            #[cfg(feature = "libtorch")]
+            ModelType::T5 => ConfigOption::T5(torch_configs::T5Config::from_file(path)),
+            #[cfg(feature = "libtorch")]
+            ModelType::LongT5 => ConfigOption::LongT5(torch_configs::LongT5Config::from_file(path)),
             ModelType::Albert => ConfigOption::Albert(AlbertConfig::from_file(path)),
             ModelType::XLNet => ConfigOption::XLNet(XLNetConfig::from_file(path)),
-            ModelType::GPT2 => ConfigOption::GPT2(Gpt2Config::from_file(path)),
-            ModelType::GPTJ => ConfigOption::GPTJ(GptJConfig::from_file(path)),
-            ModelType::GPTNeo => ConfigOption::GPTNeo(GptNeoConfig::from_file(path)),
-            ModelType::OpenAiGpt => ConfigOption::OpenAiGpt(OpenAiGptConfig::from_file(path)),
-            ModelType::Reformer => ConfigOption::Reformer(ReformerConfig::from_file(path)),
-            ModelType::ProphetNet => ConfigOption::ProphetNet(ProphetNetConfig::from_file(path)),
-            ModelType::Longformer => ConfigOption::Longformer(LongformerConfig::from_file(path)),
-            ModelType::Pegasus => ConfigOption::Pegasus(PegasusConfig::from_file(path)),
-            ModelType::Roberta | ModelType::XLMRoberta => {
-                ConfigOption::Roberta(RobertaConfig::from_file(path))
+            #[cfg(feature = "libtorch")]
+            ModelType::GPT2 => ConfigOption::GPT2(torch_configs::Gpt2Config::from_file(path)),
+            #[cfg(feature = "libtorch")]
+            ModelType::GPTJ => ConfigOption::GPTJ(torch_configs::GptJConfig::from_file(path)),
+            #[cfg(feature = "libtorch")]
+            ModelType::GPTNeo => ConfigOption::GPTNeo(torch_configs::GptNeoConfig::from_file(path)),
+            #[cfg(feature = "libtorch")]
+            ModelType::OpenAiGpt => {
+                ConfigOption::OpenAiGpt(torch_configs::OpenAiGptConfig::from_file(path))
             }
-            ModelType::MBart => ConfigOption::MBart(MBartConfig::from_file(path)),
+            #[cfg(feature = "libtorch")]
+            ModelType::Reformer => {
+                ConfigOption::Reformer(torch_configs::ReformerConfig::from_file(path))
+            }
+            #[cfg(feature = "libtorch")]
+            ModelType::ProphetNet => {
+                ConfigOption::ProphetNet(torch_configs::ProphetNetConfig::from_file(path))
+            }
+            ModelType::Longformer => ConfigOption::Longformer(LongformerConfig::from_file(path)),
+            #[cfg(feature = "libtorch")]
+            ModelType::Pegasus => {
+                ConfigOption::Pegasus(torch_configs::PegasusConfig::from_file(path))
+            }
+            ModelType::Roberta | ModelType::XLMRoberta => {
+                ConfigOption::Roberta(BertConfig::from_file(path))
+            }
+            #[cfg(feature = "libtorch")]
+            ModelType::MBart => ConfigOption::MBart(torch_configs::MBartConfig::from_file(path)),
+            #[cfg(feature = "libtorch")]
             ModelType::M2M100 | ModelType::NLLB => {
-                ConfigOption::M2M100(M2M100Config::from_file(path))
+                ConfigOption::M2M100(torch_configs::M2M100Config::from_file(path))
             }
             ModelType::FNet => ConfigOption::FNet(FNetConfig::from_file(path)),
             #[cfg(feature = "onnx")]
             ModelType::ONNX => ConfigOption::ONNX(ONNXModelConfig::from_file(path)),
+            #[cfg(all(feature = "onnx", not(feature = "libtorch")))]
+            _ => {
+                unreachable!("{model_type:?} models are only supported with the `libtorch` feature",)
+            }
         }
     }
 
     pub fn get_label_mapping(&self) -> &HashMap<i64, String> {
         match self {
+            #[cfg(feature = "libtorch")]
             Self::Bart(config) => config
                 .id2label
                 .as_ref()
@@ -366,6 +404,7 @@ impl ConfigOption {
                 .id2label
                 .as_ref()
                 .expect("No label dictionary (id2label) provided in configuration file"),
+            #[cfg(feature = "libtorch")]
             Self::Marian(config) => config
                 .id2label
                 .as_ref()
@@ -382,10 +421,12 @@ impl ConfigOption {
                 .id2label
                 .as_ref()
                 .expect("No label dictionary (id2label) provided in configuration file"),
+            #[cfg(feature = "libtorch")]
             Self::Reformer(config) => config
                 .id2label
                 .as_ref()
                 .expect("No label dictionary (id2label) provided in configuration file"),
+            #[cfg(feature = "libtorch")]
             Self::ProphetNet(config) => config
                 .id2label
                 .as_ref()
@@ -394,10 +435,12 @@ impl ConfigOption {
                 .id2label
                 .as_ref()
                 .expect("No label dictionary (id2label) provided in configuration file"),
+            #[cfg(feature = "libtorch")]
             Self::MBart(config) => config
                 .id2label
                 .as_ref()
                 .expect("No label dictionary (id2label) provided in configuration file"),
+            #[cfg(feature = "libtorch")]
             Self::M2M100(config) => config
                 .id2label
                 .as_ref()
@@ -415,39 +458,59 @@ impl ConfigOption {
                 .id2label
                 .as_ref()
                 .expect("No label dictionary (id2label) provided in configuration file"),
+            #[cfg(feature = "libtorch")]
             Self::T5(_) => panic!("T5 does not use a label mapping"),
+            #[cfg(feature = "libtorch")]
             Self::LongT5(_) => panic!("LongT5 does not use a label mapping"),
+            #[cfg(feature = "libtorch")]
             Self::OpenAiGpt(_) => panic!("OpenAI GPT does not use a label mapping"),
+            #[cfg(feature = "libtorch")]
             Self::GPT2(_) => panic!("GPT2 does not use a label mapping"),
+            #[cfg(feature = "libtorch")]
             Self::GPTJ(_) => panic!("GPT-J does not use a label mapping"),
+            #[cfg(feature = "libtorch")]
             Self::GPTNeo(_) => panic!("GPT-Neo does not use a label mapping"),
+            #[cfg(feature = "libtorch")]
             Self::Pegasus(_) => panic!("Pegasus does not use a label mapping"),
         }
     }
 
     pub fn get_max_len(&self) -> Option<i64> {
         match self {
+            #[cfg(feature = "libtorch")]
             Self::Bart(config) => Some(config.max_position_embeddings),
             Self::Bert(config) => Some(config.max_position_embeddings),
             Self::Deberta(config) => Some(config.max_position_embeddings),
             Self::DebertaV2(config) => Some(config.max_position_embeddings),
             Self::DistilBert(config) => Some(config.max_position_embeddings),
             Self::Electra(config) => Some(config.max_position_embeddings),
+            #[cfg(feature = "libtorch")]
             Self::Marian(config) => Some(config.max_position_embeddings),
             Self::MobileBert(config) => Some(config.max_position_embeddings),
+            #[cfg(feature = "libtorch")]
             Self::T5(_) => None,
+            #[cfg(feature = "libtorch")]
             Self::LongT5(_) => None,
             Self::Albert(config) => Some(config.max_position_embeddings),
             Self::XLNet(_) => None,
+            #[cfg(feature = "libtorch")]
             Self::GPT2(config) => Some(config.n_positions),
+            #[cfg(feature = "libtorch")]
             Self::GPTJ(config) => Some(config.n_positions),
+            #[cfg(feature = "libtorch")]
             Self::Reformer(config) => Some(config.max_position_embeddings),
+            #[cfg(feature = "libtorch")]
             Self::ProphetNet(config) => Some(config.max_position_embeddings),
             Self::Longformer(config) => Some(config.max_position_embeddings),
+            #[cfg(feature = "libtorch")]
             Self::Pegasus(config) => Some(config.max_position_embeddings),
+            #[cfg(feature = "libtorch")]
             Self::OpenAiGpt(config) => Some(config.n_positions),
+            #[cfg(feature = "libtorch")]
             Self::GPTNeo(config) => Some(config.max_position_embeddings),
+            #[cfg(feature = "libtorch")]
             Self::MBart(config) => Some(config.max_position_embeddings),
+            #[cfg(feature = "libtorch")]
             Self::M2M100(config) => Some(config.max_position_embeddings),
             Self::FNet(config) => Some(config.max_position_embeddings),
             Self::Roberta(config) => Some(config.max_position_embeddings),
@@ -458,27 +521,40 @@ impl ConfigOption {
 
     pub fn get_vocab_size(&self) -> i64 {
         match self {
+            #[cfg(feature = "libtorch")]
             Self::Bart(config) => config.vocab_size,
             Self::Bert(config) => config.vocab_size,
             Self::Deberta(config) => config.vocab_size,
             Self::DebertaV2(config) => config.vocab_size,
             Self::DistilBert(config) => config.vocab_size,
             Self::Electra(config) => config.vocab_size,
+            #[cfg(feature = "libtorch")]
             Self::Marian(config) => config.vocab_size,
             Self::MobileBert(config) => config.vocab_size,
+            #[cfg(feature = "libtorch")]
             Self::T5(config) => config.vocab_size,
+            #[cfg(feature = "libtorch")]
             Self::LongT5(config) => config.vocab_size,
             Self::Albert(config) => config.vocab_size,
             Self::XLNet(config) => config.vocab_size,
+            #[cfg(feature = "libtorch")]
             Self::GPT2(config) => config.vocab_size,
+            #[cfg(feature = "libtorch")]
             Self::GPTJ(config) => config.vocab_size,
+            #[cfg(feature = "libtorch")]
             Self::Reformer(config) => config.vocab_size,
+            #[cfg(feature = "libtorch")]
             Self::ProphetNet(config) => config.vocab_size,
             Self::Longformer(config) => config.vocab_size,
+            #[cfg(feature = "libtorch")]
             Self::Pegasus(config) => config.vocab_size,
+            #[cfg(feature = "libtorch")]
             Self::OpenAiGpt(config) => config.vocab_size,
+            #[cfg(feature = "libtorch")]
             Self::GPTNeo(config) => config.vocab_size,
+            #[cfg(feature = "libtorch")]
             Self::MBart(config) => config.vocab_size,
+            #[cfg(feature = "libtorch")]
             Self::M2M100(config) => config.vocab_size,
             Self::FNet(config) => config.vocab_size,
             Self::Roberta(config) => config.vocab_size,
@@ -489,27 +565,40 @@ impl ConfigOption {
 
     pub fn get_decoder_start_token_id(&self) -> Option<i64> {
         match self {
+            #[cfg(feature = "libtorch")]
             Self::Bart(config) => config.decoder_start_token_id,
             Self::Bert(_) => None,
             Self::Deberta(_) => None,
             Self::DebertaV2(_) => None,
             Self::DistilBert(_) => None,
             Self::Electra(_) => None,
+            #[cfg(feature = "libtorch")]
             Self::Marian(config) => config.decoder_start_token_id,
             Self::MobileBert(_) => None,
+            #[cfg(feature = "libtorch")]
             Self::T5(config) => config.decoder_start_token_id,
+            #[cfg(feature = "libtorch")]
             Self::LongT5(config) => config.decoder_start_token_id,
             Self::Albert(_) => None,
             Self::XLNet(_) => None,
+            #[cfg(feature = "libtorch")]
             Self::GPT2(config) => config.decoder_start_token_id,
+            #[cfg(feature = "libtorch")]
             Self::GPTJ(config) => config.decoder_start_token_id,
+            #[cfg(feature = "libtorch")]
             Self::Reformer(config) => config.decoder_start_token_id,
+            #[cfg(feature = "libtorch")]
             Self::ProphetNet(config) => config.decoder_start_token_id,
             Self::Longformer(_) => None,
+            #[cfg(feature = "libtorch")]
             Self::Pegasus(config) => config.decoder_start_token_id,
+            #[cfg(feature = "libtorch")]
             Self::OpenAiGpt(config) => config.decoder_start_token_id,
+            #[cfg(feature = "libtorch")]
             Self::GPTNeo(config) => config.decoder_start_token_id,
+            #[cfg(feature = "libtorch")]
             Self::MBart(config) => config.decoder_start_token_id,
+            #[cfg(feature = "libtorch")]
             Self::M2M100(config) => config.decoder_start_token_id,
             Self::FNet(config) => config.decoder_start_token_id,
             Self::Roberta(_) => None,
@@ -520,27 +609,40 @@ impl ConfigOption {
 
     pub fn get_forced_bos_token_id(&self) -> Option<i64> {
         match self {
+            #[cfg(feature = "libtorch")]
             Self::Bart(config) => config.forced_bos_token_id,
             Self::Bert(_) => None,
             Self::Deberta(_) => None,
             Self::DebertaV2(_) => None,
             Self::DistilBert(_) => None,
             Self::Electra(_) => None,
+            #[cfg(feature = "libtorch")]
             Self::Marian(config) => config.forced_bos_token_id,
             Self::MobileBert(_) => None,
+            #[cfg(feature = "libtorch")]
             Self::T5(config) => config.forced_bos_token_id,
+            #[cfg(feature = "libtorch")]
             Self::LongT5(config) => config.forced_bos_token_id,
             Self::Albert(_) => None,
             Self::XLNet(_) => None,
+            #[cfg(feature = "libtorch")]
             Self::GPT2(config) => config.forced_bos_token_id,
+            #[cfg(feature = "libtorch")]
             Self::GPTJ(config) => config.forced_bos_token_id,
+            #[cfg(feature = "libtorch")]
             Self::Reformer(config) => config.forced_bos_token_id,
+            #[cfg(feature = "libtorch")]
             Self::ProphetNet(config) => config.forced_bos_token_id,
             Self::Longformer(_) => None,
+            #[cfg(feature = "libtorch")]
             Self::Pegasus(config) => config.forced_bos_token_id,
+            #[cfg(feature = "libtorch")]
             Self::OpenAiGpt(config) => config.forced_bos_token_id,
+            #[cfg(feature = "libtorch")]
             Self::GPTNeo(config) => config.forced_bos_token_id,
+            #[cfg(feature = "libtorch")]
             Self::MBart(config) => config.forced_bos_token_id,
+            #[cfg(feature = "libtorch")]
             Self::M2M100(config) => config.forced_bos_token_id,
             Self::FNet(_) => None,
             Self::Roberta(_) => None,
@@ -551,27 +653,40 @@ impl ConfigOption {
 
     pub fn get_forced_eos_token_id(&self) -> Option<i64> {
         match self {
+            #[cfg(feature = "libtorch")]
             Self::Bart(config) => config.forced_eos_token_id,
             Self::Bert(_) => None,
             Self::Deberta(_) => None,
             Self::DebertaV2(_) => None,
             Self::DistilBert(_) => None,
             Self::Electra(_) => None,
+            #[cfg(feature = "libtorch")]
             Self::Marian(config) => config.forced_eos_token_id,
             Self::MobileBert(_) => None,
+            #[cfg(feature = "libtorch")]
             Self::T5(config) => config.forced_eos_token_id,
+            #[cfg(feature = "libtorch")]
             Self::LongT5(config) => config.forced_eos_token_id,
             Self::Albert(_) => None,
             Self::XLNet(_) => None,
+            #[cfg(feature = "libtorch")]
             Self::GPT2(config) => config.forced_eos_token_id,
+            #[cfg(feature = "libtorch")]
             Self::GPTJ(config) => config.forced_eos_token_id,
+            #[cfg(feature = "libtorch")]
             Self::Reformer(config) => config.forced_eos_token_id,
+            #[cfg(feature = "libtorch")]
             Self::ProphetNet(config) => config.forced_eos_token_id,
             Self::Longformer(_) => None,
+            #[cfg(feature = "libtorch")]
             Self::Pegasus(config) => config.forced_eos_token_id,
+            #[cfg(feature = "libtorch")]
             Self::OpenAiGpt(config) => config.forced_eos_token_id,
+            #[cfg(feature = "libtorch")]
             Self::GPTNeo(config) => config.forced_eos_token_id,
+            #[cfg(feature = "libtorch")]
             Self::MBart(config) => config.forced_eos_token_id,
+            #[cfg(feature = "libtorch")]
             Self::M2M100(config) => config.forced_eos_token_id,
             Self::FNet(_) => None,
             Self::Roberta(_) => None,
@@ -623,7 +738,8 @@ impl TryFrom<&ConfigOption> for AlbertConfig {
     }
 }
 
-impl TryFrom<&ConfigOption> for T5Config {
+#[cfg(feature = "libtorch")]
+impl TryFrom<&ConfigOption> for torch_configs::T5Config {
     type Error = RustBertError;
 
     fn try_from(config: &ConfigOption) -> Result<Self, Self::Error> {
@@ -1570,6 +1686,7 @@ impl TokenizerOption {
     }
 
     /// Helper function to prepare the input for translation models
+    #[cfg(feature = "libtorch")]
     pub fn get_prefix_and_forced_bos_id(
         &self,
         source_language: Option<&Language>,
@@ -2255,7 +2372,7 @@ impl TokenizerOption {
         &self,
         input: S,
         max_length: usize,
-        device: Device,
+        device: tch::Device,
     ) -> (Tensor, Tensor)
     where
         S: AsRef<[&'a str]>,
@@ -2298,6 +2415,43 @@ impl TokenizerOption {
                 .to(device)
                 .to_kind(Kind::Int64),
         )
+    }
+
+    /// Tokenize the input texts and pad them to a common length, returning
+    /// backend-agnostic `ndarray` arrays of token ids and token type ids.
+    pub fn encode_and_pad<'a, S>(&self, input: S, max_length: usize) -> (Array2<i64>, Array2<i64>)
+    where
+        S: AsRef<[&'a str]>,
+    {
+        let mut tokenized_input: Vec<TokenizedInput> = self.encode_list(
+            input.as_ref(),
+            max_length,
+            &TruncationStrategy::LongestFirst,
+            0,
+        );
+        let max_len = tokenized_input
+            .iter()
+            .map(|input| input.token_ids.len())
+            .max()
+            .unwrap();
+        let pad_id = self
+            .get_pad_id()
+            .expect("The Tokenizer used for sequence classification should contain a PAD id");
+        let mut input_ids = Array2::<i64>::zeros((tokenized_input.len(), max_len));
+        let mut token_type_ids = Array2::<i64>::zeros((tokenized_input.len(), max_len));
+        for (row, input) in tokenized_input.iter_mut().enumerate() {
+            input.token_ids.resize(max_len, pad_id);
+            input
+                .segment_ids
+                .resize(max_len, *input.segment_ids.last().unwrap_or(&0));
+            input_ids
+                .row_mut(row)
+                .assign(&Array1::from(input.token_ids.clone()));
+            token_type_ids.row_mut(row).assign(&Array1::from_iter(
+                input.segment_ids.iter().map(|&segment| segment as i64),
+            ));
+        }
+        (input_ids, token_type_ids)
     }
 
     /// Interface method
@@ -2355,11 +2509,29 @@ impl TokenizerOption {
     }
 }
 
+/// Convert an optional ndarray input to an optional tensor (LibTorch builds only).
 #[cfg(feature = "libtorch")]
-pub fn cast_var_store(varstore: &mut VarStore, kind: Option<Kind>, device: Device) {
+pub(crate) fn to_tensor_i64(array: Option<&ArrayD<i64>>) -> Option<Tensor> {
+    array.map(|array| {
+        crate::common::tensor_conversion::array_to_tensor_i64(array)
+            .expect("Error converting ndarray input to tensor")
+    })
+}
+
+/// Convert an optional ndarray input to an optional tensor (LibTorch builds only).
+#[cfg(feature = "libtorch")]
+pub(crate) fn to_tensor_f32(array: Option<&ArrayD<f32>>) -> Option<Tensor> {
+    array.map(|array| {
+        crate::common::tensor_conversion::array_to_tensor_f32(array)
+            .expect("Error converting ndarray input to tensor")
+    })
+}
+
+#[cfg(feature = "libtorch")]
+pub fn cast_var_store(varstore: &mut VarStore, kind: Option<Kind>, device: tch::Device) {
     match (kind, device) {
         (Some(kind), _) => varstore.set_kind(kind),
-        (None, Device::Cpu) => varstore.set_kind(Kind::Float),
+        (None, tch::Device::Cpu) => varstore.set_kind(Kind::Float),
         (None, _) => {}
     }
 }

@@ -37,6 +37,48 @@ jobs:
           command: build
           args: --no-default-features --features download-libtorch
 
+  check-onnx-only:
+    name: Check ONNX-only build (no libtorch)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+      - uses: actions-rs/cargo@v1
+        with:
+          command: check
+          args: --no-default-features --features onnx
+
+  test-onnx-only:
+    name: Integration tests (ONNX-only, no libtorch)
+    runs-on: ubuntu-latest
+    env:
+      ORT_DYLIB_PATH: /tmp/onnxruntime/lib/libonnxruntime.so
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+      - name: Download onnxruntime dynamic library
+        run: |
+          wget -q https://github.com/microsoft/onnxruntime/releases/download/v1.20.1/onnxruntime-linux-x64-1.20.1.tgz -O /tmp/onnxruntime.tgz
+          mkdir -p /tmp/onnxruntime
+          tar xzf /tmp/onnxruntime.tgz -C /tmp/onnxruntime --strip-components=1
+      - uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --package rust-bert
+            --no-default-features
+            --features onnx
+            --features remote
+            --features default-tls
+            --test onnx
+
   check-libtorch-onnx:
     name: Check libtorch + ONNX dual build
     runs-on: ubuntu-latest

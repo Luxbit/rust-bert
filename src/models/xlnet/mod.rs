@@ -54,13 +54,19 @@
 //! # }
 //! ```
 
+#[cfg(feature = "libtorch")]
 mod attention;
+pub mod config;
+#[cfg(feature = "libtorch")]
 mod encoder;
+#[cfg(feature = "libtorch")]
 mod xlnet_model;
 
+#[cfg(feature = "libtorch")]
 pub use attention::LayerState;
+pub use config::{XLNetConfig, XLNetConfigResources, XLNetModelResources, XLNetVocabResources};
+#[cfg(feature = "libtorch")]
 pub use xlnet_model::{
-    XLNetConfig, XLNetConfigResources, XLNetForMultipleChoice, XLNetForQuestionAnswering,
-    XLNetForSequenceClassification, XLNetForTokenClassification, XLNetGenerator, XLNetLMHeadModel,
-    XLNetModel, XLNetModelResources, XLNetVocabResources,
+    XLNetForMultipleChoice, XLNetForQuestionAnswering, XLNetForSequenceClassification,
+    XLNetForTokenClassification, XLNetGenerator, XLNetLMHeadModel, XLNetModel,
 };

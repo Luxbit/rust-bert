@@ -48,15 +48,22 @@
 //! # }
 //! ```
 
+#[cfg(feature = "libtorch")]
 mod attention;
+pub mod config;
+#[cfg(feature = "libtorch")]
 mod deberta_v2_model;
+#[cfg(feature = "libtorch")]
 mod embeddings;
+#[cfg(feature = "libtorch")]
 mod encoder;
 
+pub use config::{
+    DebertaV2Config, DebertaV2ConfigResources, DebertaV2ModelResources, DebertaV2VocabResources,
+};
+#[cfg(feature = "libtorch")]
 pub use deberta_v2_model::{
-    DebertaV2Config, DebertaV2ConfigResources, DebertaV2ForMaskedLM, DebertaV2ForQuestionAnswering,
-    DebertaV2ForSequenceClassification, DebertaV2ForTokenClassification, DebertaV2Model,
-    DebertaV2ModelResources, DebertaV2QuestionAnsweringOutput,
+    DebertaV2ForMaskedLM, DebertaV2ForQuestionAnswering, DebertaV2ForSequenceClassification,
+    DebertaV2ForTokenClassification, DebertaV2Model, DebertaV2QuestionAnsweringOutput,
     DebertaV2SequenceClassificationOutput, DebertaV2TokenClassificationOutput,
-    DebertaV2VocabResources,
 };

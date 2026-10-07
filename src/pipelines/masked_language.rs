@@ -46,28 +46,39 @@
 //! }
 //! ```
 //!
-use crate::bert::BertForMaskedLM;
 use crate::common::error::RustBertError;
-use crate::deberta::DebertaForMaskedLM;
-use crate::deberta_v2::DebertaV2ForMaskedLM;
-use crate::fnet::FNetForMaskedLM;
 use crate::pipelines::common::{
-    cast_var_store, get_device, ConfigOption, ModelResource, ModelType, TokenizerOption,
+    get_device, ConfigOption, ModelResource, ModelType, TokenizerOption,
 };
 use crate::resources::ResourceProvider;
-use crate::roberta::RobertaForMaskedLM;
 use std::convert::TryFrom;
 
+#[cfg(feature = "libtorch")]
+use crate::pipelines::common::cast_var_store;
 #[cfg(feature = "onnx")]
 use crate::pipelines::onnx::{config::ONNXEnvironmentConfig, ONNXEncoder};
+#[cfg(feature = "libtorch")]
+use tch::nn::VarStore;
+#[cfg(feature = "libtorch")]
+use tch::{no_grad, Kind, Tensor};
 
-#[cfg(feature = "remote")]
+#[cfg(all(feature = "remote", feature = "libtorch"))]
 use crate::{
     bert::{BertConfigResources, BertModelResources, BertVocabResources},
     resources::RemoteResource,
 };
-use tch::nn::VarStore;
-use tch::{no_grad, Device, Kind, Tensor};
+
+#[cfg(feature = "libtorch")]
+mod torch_models {
+    pub use crate::bert::BertForMaskedLM;
+    pub use crate::deberta::DebertaForMaskedLM;
+    pub use crate::deberta_v2::DebertaV2ForMaskedLM;
+    pub use crate::fnet::FNetForMaskedLM;
+    pub use crate::roberta::RobertaForMaskedLM;
+}
+
+use crate::Device;
+use ndarray::{Array1, Array2, ArrayD};
 
 #[derive(Debug, Clone)]
 /// Output container for masked language model pipeline.
@@ -103,7 +114,8 @@ pub struct MaskedLanguageConfig {
     pub mask_token: Option<String>,
     /// Device to place the model on (default: CUDA/GPU when available)
     pub device: Device,
-    /// Model weights precision. If not provided, will default to full precision on CPU, or the loaded weights precision otherwise
+    /// Model weights precision (LibTorch backend only). If not provided, will default to full precision on CPU, or the loaded weights precision otherwise
+    #[cfg(feature = "libtorch")]
     pub kind: Option<Kind>,
 }
 
@@ -145,11 +157,12 @@ impl MaskedLanguageConfig {
             add_prefix_space: add_prefix_space.into(),
             mask_token: mask_token.into(),
             device: Device::cuda_if_available(),
+            #[cfg(feature = "libtorch")]
             kind: None,
         }
     }
 }
-#[cfg(feature = "remote")]
+#[cfg(all(feature = "remote", feature = "libtorch"))]
 impl Default for MaskedLanguageConfig {
     /// Provides a BERT language model
     fn default() -> MaskedLanguageConfig {
@@ -173,17 +186,23 @@ impl Default for MaskedLanguageConfig {
 /// # Abstraction that holds one particular masked language model, for any of the supported models
 pub enum MaskedLanguageOption {
     /// Bert for Masked Language
-    Bert(BertForMaskedLM),
+    #[cfg(feature = "libtorch")]
+    Bert(torch_models::BertForMaskedLM),
     /// DeBERTa for Masked Language
-    Deberta(DebertaForMaskedLM),
+    #[cfg(feature = "libtorch")]
+    Deberta(torch_models::DebertaForMaskedLM),
     /// DeBERTa V2 for Masked Language
-    DebertaV2(DebertaV2ForMaskedLM),
+    #[cfg(feature = "libtorch")]
+    DebertaV2(torch_models::DebertaV2ForMaskedLM),
     /// Roberta for Masked Language
-    Roberta(RobertaForMaskedLM),
+    #[cfg(feature = "libtorch")]
+    Roberta(torch_models::RobertaForMaskedLM),
     /// XLMRoberta for Masked Language
-    XLMRoberta(RobertaForMaskedLM),
+    #[cfg(feature = "libtorch")]
+    XLMRoberta(torch_models::RobertaForMaskedLM),
     /// FNet for Masked Language
-    FNet(FNetForMaskedLM),
+    #[cfg(feature = "libtorch")]
+    FNet(torch_models::FNetForMaskedLM),
     /// ONNX model for Masked Language
     #[cfg(feature = "onnx")]
     ONNX(ONNXEncoder),
@@ -197,14 +216,20 @@ impl MaskedLanguageOption {
     ///   `ModelResources` (Torch or ONNX) and `ModelType` (Architecture for Torch models) variants provided and
     pub fn new(config: &MaskedLanguageConfig) -> Result<Self, RustBertError> {
         match config.model_resource {
+            #[cfg(feature = "libtorch")]
             ModelResource::Torch(_) => Self::new_torch(config),
             #[cfg(feature = "onnx")]
             ModelResource::ONNX(_) => Self::new_onnx(config),
+            #[cfg(all(feature = "onnx", not(feature = "libtorch")))]
+            _ => Err(RustBertError::InvalidConfigurationError(
+                "Torch model resources require the `libtorch` feature".to_string(),
+            )),
         }
     }
 
+    #[cfg(feature = "libtorch")]
     fn new_torch(config: &MaskedLanguageConfig) -> Result<Self, RustBertError> {
-        let device = config.device;
+        let device: tch::Device = config.device.into();
         let weights_path = config.model_resource.get_torch_local_path()?;
         let mut var_store = VarStore::new(device);
         let model_config =
@@ -213,10 +238,9 @@ impl MaskedLanguageOption {
         let model = match model_type {
             ModelType::Bert => {
                 if let ConfigOption::Bert(config) = model_config {
-                    Ok(MaskedLanguageOption::Bert(BertForMaskedLM::new(
-                        var_store.root(),
-                        config,
-                    )))
+                    Ok(MaskedLanguageOption::Bert(
+                        torch_models::BertForMaskedLM::new(var_store.root(), config),
+                    ))
                 } else {
                     Err(RustBertError::InvalidConfigurationError(
                         "You can only supply a BertConfig for Bert!".to_string(),
@@ -225,10 +249,9 @@ impl MaskedLanguageOption {
             }
             ModelType::Deberta => {
                 if let ConfigOption::Deberta(config) = model_config {
-                    Ok(MaskedLanguageOption::Deberta(DebertaForMaskedLM::new(
-                        var_store.root(),
-                        config,
-                    )))
+                    Ok(MaskedLanguageOption::Deberta(
+                        torch_models::DebertaForMaskedLM::new(var_store.root(), config),
+                    ))
                 } else {
                     Err(RustBertError::InvalidConfigurationError(
                         "You can only supply a DebertaConfig for DeBERTa!".to_string(),
@@ -237,10 +260,9 @@ impl MaskedLanguageOption {
             }
             ModelType::DebertaV2 => {
                 if let ConfigOption::DebertaV2(config) = model_config {
-                    Ok(MaskedLanguageOption::DebertaV2(DebertaV2ForMaskedLM::new(
-                        var_store.root(),
-                        config,
-                    )))
+                    Ok(MaskedLanguageOption::DebertaV2(
+                        torch_models::DebertaV2ForMaskedLM::new(var_store.root(), config),
+                    ))
                 } else {
                     Err(RustBertError::InvalidConfigurationError(
                         "You can only supply a DebertaV2Config for DeBERTa V2!".to_string(),
@@ -249,10 +271,9 @@ impl MaskedLanguageOption {
             }
             ModelType::Roberta => {
                 if let ConfigOption::Roberta(config) = model_config {
-                    Ok(MaskedLanguageOption::Roberta(RobertaForMaskedLM::new(
-                        var_store.root(),
-                        config,
-                    )))
+                    Ok(MaskedLanguageOption::Roberta(
+                        torch_models::RobertaForMaskedLM::new(var_store.root(), config),
+                    ))
                 } else {
                     Err(RustBertError::InvalidConfigurationError(
                         "You can only supply a BertConfig for Roberta!".to_string(),
@@ -261,10 +282,9 @@ impl MaskedLanguageOption {
             }
             ModelType::XLMRoberta => {
                 if let ConfigOption::Bert(config) = model_config {
-                    Ok(MaskedLanguageOption::XLMRoberta(RobertaForMaskedLM::new(
-                        var_store.root(),
-                        config,
-                    )))
+                    Ok(MaskedLanguageOption::XLMRoberta(
+                        torch_models::RobertaForMaskedLM::new(var_store.root(), config),
+                    ))
                 } else {
                     Err(RustBertError::InvalidConfigurationError(
                         "You can only supply a BertConfig for Roberta!".to_string(),
@@ -273,10 +293,9 @@ impl MaskedLanguageOption {
             }
             ModelType::FNet => {
                 if let ConfigOption::FNet(config) = model_config {
-                    Ok(MaskedLanguageOption::FNet(FNetForMaskedLM::new(
-                        var_store.root(),
-                        config,
-                    )))
+                    Ok(MaskedLanguageOption::FNet(
+                        torch_models::FNetForMaskedLM::new(var_store.root(), config),
+                    ))
                 } else {
                     Err(RustBertError::InvalidConfigurationError(
                         "You can only supply a FNetConfig for FNet!".to_string(),
@@ -294,7 +313,7 @@ impl MaskedLanguageOption {
 
     #[cfg(feature = "onnx")]
     pub fn new_onnx(config: &MaskedLanguageConfig) -> Result<Self, RustBertError> {
-        let onnx_config = ONNXEnvironmentConfig::from_device(crate::Device::from(config.device));
+        let onnx_config = ONNXEnvironmentConfig::from_device(config.device);
         let encoder_file = config
             .model_resource
             .get_onnx_local_paths()?
@@ -308,11 +327,17 @@ impl MaskedLanguageOption {
     /// Returns the `ModelType` for this MaskedLanguageOption
     pub fn model_type(&self) -> ModelType {
         match *self {
+            #[cfg(feature = "libtorch")]
             Self::Bert(_) => ModelType::Bert,
+            #[cfg(feature = "libtorch")]
             Self::Deberta(_) => ModelType::Deberta,
+            #[cfg(feature = "libtorch")]
             Self::DebertaV2(_) => ModelType::DebertaV2,
+            #[cfg(feature = "libtorch")]
             Self::Roberta(_) => ModelType::Roberta,
+            #[cfg(feature = "libtorch")]
             Self::XLMRoberta(_) => ModelType::Roberta,
+            #[cfg(feature = "libtorch")]
             Self::FNet(_) => ModelType::FNet,
             #[cfg(feature = "onnx")]
             Self::ONNX(_) => ModelType::ONNX,
@@ -322,109 +347,149 @@ impl MaskedLanguageOption {
     /// Interface method to forward_t() of the particular models.
     pub fn forward_t(
         &self,
-        input_ids: Option<&Tensor>,
-        mask: Option<&Tensor>,
-        token_type_ids: Option<&Tensor>,
-        position_ids: Option<&Tensor>,
-        input_embeds: Option<&Tensor>,
-        encoder_hidden_states: Option<&Tensor>,
-        encoder_mask: Option<&Tensor>,
+        input_ids: Option<&ArrayD<i64>>,
+        mask: Option<&ArrayD<i64>>,
+        token_type_ids: Option<&ArrayD<i64>>,
+        position_ids: Option<&ArrayD<i64>>,
+        input_embeds: Option<&ArrayD<f32>>,
+        _encoder_hidden_states: Option<&ArrayD<f32>>,
+        _encoder_mask: Option<&ArrayD<i64>>,
         train: bool,
-    ) -> Tensor {
-        match *self {
-            Self::Bert(ref model) => {
-                model
-                    .forward_t(
-                        input_ids,
-                        mask,
-                        token_type_ids,
-                        position_ids,
-                        input_embeds,
-                        encoder_hidden_states,
-                        encoder_mask,
-                        train,
-                    )
-                    .prediction_scores
+    ) -> ArrayD<f32> {
+        #[cfg(feature = "libtorch")]
+        {
+            use crate::common::tensor_conversion::tensor_to_array_f32;
+            use crate::pipelines::common::{to_tensor_f32, to_tensor_i64};
+            let input_ids_array = input_ids;
+            let mask_array = mask;
+            let token_type_ids_array = token_type_ids;
+            let position_ids_array = position_ids;
+            let input_embeds_array = input_embeds;
+            let input_ids = to_tensor_i64(input_ids);
+            let mask = to_tensor_i64(mask);
+            let token_type_ids = to_tensor_i64(token_type_ids);
+            let position_ids = to_tensor_i64(position_ids);
+            let input_embeds = to_tensor_f32(input_embeds);
+            let encoder_hidden_states = to_tensor_f32(_encoder_hidden_states);
+            let encoder_mask = to_tensor_i64(_encoder_mask);
+            match *self {
+                Self::Bert(ref model) => tensor_to_array_f32(
+                    &model
+                        .forward_t(
+                            input_ids.as_ref(),
+                            mask.as_ref(),
+                            token_type_ids.as_ref(),
+                            position_ids.as_ref(),
+                            input_embeds.as_ref(),
+                            encoder_hidden_states.as_ref(),
+                            encoder_mask.as_ref(),
+                            train,
+                        )
+                        .prediction_scores,
+                )
+                .expect("Error converting model output to ndarray"),
+                Self::Deberta(ref model) => tensor_to_array_f32(
+                    &model
+                        .forward_t(
+                            input_ids.as_ref(),
+                            mask.as_ref(),
+                            token_type_ids.as_ref(),
+                            position_ids.as_ref(),
+                            input_embeds.as_ref(),
+                            train,
+                        )
+                        .expect("Error in Deberta forward_t")
+                        .logits,
+                )
+                .expect("Error converting model output to ndarray"),
+                Self::DebertaV2(ref model) => tensor_to_array_f32(
+                    &model
+                        .forward_t(
+                            input_ids.as_ref(),
+                            mask.as_ref(),
+                            token_type_ids.as_ref(),
+                            position_ids.as_ref(),
+                            input_embeds.as_ref(),
+                            train,
+                        )
+                        .expect("Error in Deberta V2 forward_t")
+                        .logits,
+                )
+                .expect("Error converting model output to ndarray"),
+                Self::Roberta(ref model) | Self::XLMRoberta(ref model) => tensor_to_array_f32(
+                    &model
+                        .forward_t(
+                            input_ids.as_ref(),
+                            mask.as_ref(),
+                            token_type_ids.as_ref(),
+                            position_ids.as_ref(),
+                            input_embeds.as_ref(),
+                            encoder_hidden_states.as_ref(),
+                            encoder_mask.as_ref(),
+                            train,
+                        )
+                        .prediction_scores,
+                )
+                .expect("Error converting model output to ndarray"),
+                Self::FNet(ref model) => tensor_to_array_f32(
+                    &model
+                        .forward_t(
+                            input_ids.as_ref(),
+                            token_type_ids.as_ref(),
+                            position_ids.as_ref(),
+                            input_embeds.as_ref(),
+                            train,
+                        )
+                        .expect("Error in FNet forward pass.")
+                        .prediction_scores,
+                )
+                .expect("Error converting model output to ndarray"),
+                #[cfg(feature = "onnx")]
+                Self::ONNX(ref model) => {
+                    let attention_mask = match mask_array {
+                        Some(mask) => Some(mask.clone()),
+                        None => input_ids_array
+                            .as_ref()
+                            .map(|array| crate::common::tensor_ops::ones_i64(array.shape())),
+                    };
+                    model
+                        .forward(
+                            input_ids_array,
+                            attention_mask.as_ref(),
+                            token_type_ids_array,
+                            position_ids_array,
+                            input_embeds_array,
+                        )
+                        .expect("Error in ONNX forward pass.")
+                        .logits
+                        .unwrap()
+                }
             }
-
-            Self::Deberta(ref model) => {
-                model
-                    .forward_t(
-                        input_ids,
-                        mask,
-                        token_type_ids,
-                        position_ids,
-                        input_embeds,
-                        train,
-                    )
-                    .expect("Error in Deberta forward_t")
-                    .logits
-            }
-            Self::DebertaV2(ref model) => {
-                model
-                    .forward_t(
-                        input_ids,
-                        mask,
-                        token_type_ids,
-                        position_ids,
-                        input_embeds,
-                        train,
-                    )
-                    .expect("Error in Deberta V2 forward_t")
-                    .logits
-            }
-
-            Self::Roberta(ref model) | Self::XLMRoberta(ref model) => {
-                model
-                    .forward_t(
-                        input_ids,
-                        mask,
-                        token_type_ids,
-                        position_ids,
-                        input_embeds,
-                        encoder_hidden_states,
-                        encoder_mask,
-                        train,
-                    )
-                    .prediction_scores
-            }
-            Self::FNet(ref model) => {
-                model
-                    .forward_t(input_ids, token_type_ids, position_ids, input_embeds, train)
-                    .expect("Error in FNet forward pass.")
-                    .prediction_scores
-            }
-            #[cfg(feature = "onnx")]
-            #[cfg(feature = "onnx")]
-            Self::ONNX(ref model) => {
-                use crate::common::tensor_conversion::{
-                    array_to_tensor_f32, tensor_to_array_f32, tensor_to_array_i64,
-                };
-                let ids = |t: &Tensor| {
-                    tensor_to_array_i64(t).expect("Error converting input tensor to ndarray")
-                };
-                let flt = |t: &Tensor| {
-                    tensor_to_array_f32(t).expect("Error converting input tensor to ndarray")
-                };
-                let input_ids = input_ids.map(|t| ids(t));
-                let attention_mask = input_ids
-                    .as_ref()
-                    .map(|array| crate::common::tensor_ops::ones_i64(array.shape()));
-                let token_type_ids = token_type_ids.map(|t| ids(t));
-                let position_ids = position_ids.map(|t| ids(t));
-                let input_embeds = input_embeds.map(|t| flt(t));
-                model
-                    .forward(
-                        input_ids.as_ref(),
-                        attention_mask.as_ref(),
-                        token_type_ids.as_ref(),
-                        position_ids.as_ref(),
-                        input_embeds.as_ref(),
-                    )
-                    .expect("Error in ONNX forward pass.")
-                    .logits
-                    .map(|array| array_to_tensor_f32(&array).expect("Error converting ONNX output"))
-                    .unwrap()
+        }
+        #[cfg(not(feature = "libtorch"))]
+        {
+            match *self {
+                #[cfg(feature = "onnx")]
+                Self::ONNX(ref model) => {
+                    let attention_mask = match mask {
+                        Some(mask) => Some(mask.clone()),
+                        None => input_ids
+                            .as_ref()
+                            .map(|array| crate::common::tensor_ops::ones_i64(array.shape())),
+                    };
+                    model
+                        .forward(
+                            input_ids,
+                            attention_mask.as_ref(),
+                            token_type_ids,
+                            position_ids,
+                            input_embeds,
+                        )
+                        .expect("Error in ONNX forward pass.")
+                        .logits
+                        .unwrap()
+                }
+                _ => unreachable!("no inference backend available"),
             }
         }
     }
@@ -589,21 +654,18 @@ impl MaskedLanguageModel {
     where
         S: AsRef<[&'a str]>,
     {
-        let (input_ids, token_type_ids) = if let Some(mask_token) = &self.mask_token {
-            let input_with_replaced_mask = self.replace_mask_token(input.as_ref(), mask_token)?;
-            self.tokenizer.tokenize_and_pad(
-                input_with_replaced_mask
-                    .iter()
-                    .map(|w| w.as_str())
-                    .collect::<Vec<&str>>()
-                    .as_slice(),
-                self.max_length,
-                self.device,
-            )
+        let input_with_replaced_mask = if let Some(mask_token) = &self.mask_token {
+            self.replace_mask_token(input.as_ref(), mask_token)?
         } else {
-            self.tokenizer
-                .tokenize_and_pad(input.as_ref(), self.max_length, self.device)
+            input.as_ref().iter().map(|text| text.to_string()).collect()
         };
+        let encode_input = input_with_replaced_mask
+            .iter()
+            .map(|w| w.as_str())
+            .collect::<Vec<&str>>();
+        let (input_ids, token_type_ids) = self
+            .tokenizer
+            .encode_and_pad(encode_input.as_slice(), self.max_length);
 
         // get the position of mask_token in input texts
         let mask_token_id =
@@ -612,36 +674,50 @@ impl MaskedLanguageModel {
                 .ok_or_else(|| RustBertError::InvalidConfigurationError(
                     "Tokenizer does not have a mask token id, Please use a tokenizer/model with a mask token.".into(),
                 ))?;
-        let mask_token_mask = input_ids.eq(mask_token_id);
 
-        let output = no_grad(|| {
-            self.language_encode.forward_t(
-                Some(&input_ids),
-                None,
-                Some(&token_type_ids),
-                None,
-                None,
-                None,
-                None,
-                false,
-            )
-        });
+        let output = self.language_encode.forward_t(
+            Some(&input_ids.clone().into_dyn()),
+            None,
+            Some(&token_type_ids.into_dyn()),
+            None,
+            None,
+            None,
+            None,
+            false,
+        );
 
         let mut output_tokens = Vec::with_capacity(input.as_ref().len());
-        for input_id in 0..input.as_ref().len() as i64 {
+        for (sentence_idx, sequence_input_ids) in input_ids.rows().into_iter().enumerate() {
             let mut sequence_tokens = vec![];
-            let sequence_mask = mask_token_mask.get(input_id);
-            if bool::try_from(sequence_mask.any())? {
-                let mask_scores = output
-                    .get(input_id)
-                    .index_select(0, &sequence_mask.argwhere().squeeze_dim(1));
-                let (token_scores, token_ids) = mask_scores.max_dim(1, false);
-                for (id, score) in token_ids.iter::<i64>()?.zip(token_scores.iter::<f64>()?) {
-                    let text = self.tokenizer.decode(&[id], false, true);
-                    sequence_tokens.push(MaskedToken { text, id, score });
+            let mask_positions = sequence_input_ids
+                .iter()
+                .enumerate()
+                .filter(|(_, &id)| id == mask_token_id)
+                .map(|(position, _)| position)
+                .collect::<Vec<usize>>();
+            if !mask_positions.is_empty() {
+                for position in mask_positions {
+                    let sentence_scores = output.index_axis(ndarray::Axis(0), sentence_idx);
+                    let scores = sentence_scores.index_axis(ndarray::Axis(0), position);
+                    let mut token_id = 0i64;
+                    let mut best_score = f32::NEG_INFINITY;
+                    for (vocab_idx, &score) in scores.iter().enumerate() {
+                        if score > best_score {
+                            best_score = score;
+                            token_id = vocab_idx as i64;
+                        }
+                    }
+                    let score = scores[token_id as usize];
+                    let text = self.tokenizer.decode(&[token_id], false, true);
+                    sequence_tokens.push(MaskedToken {
+                        text,
+                        id: token_id,
+                        score: score as f64,
+                    });
                 }
             }
             output_tokens.push(sequence_tokens);
+            let _ = sentence_idx;
         }
         Ok(output_tokens)
     }

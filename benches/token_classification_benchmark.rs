@@ -2,8 +2,8 @@ use criterion::{criterion_group, criterion_main, Criterion};
 use rust_bert::pipelines::token_classification::{
     TokenClassificationConfig, TokenClassificationModel,
 };
+use rust_bert::Device;
 use std::hint::black_box;
-use tch::Device;
 
 fn create_model() -> TokenClassificationModel {
     let config = TokenClassificationConfig {

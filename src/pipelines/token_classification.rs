@@ -112,22 +112,29 @@
 //! # ;
 //! ```
 
-use crate::albert::AlbertForTokenClassification;
-use crate::bert::BertForTokenClassification;
 use crate::common::error::RustBertError;
-use crate::deberta::DebertaForTokenClassification;
-use crate::distilbert::DistilBertForTokenClassification;
-use crate::electra::ElectraForTokenClassification;
-use crate::fnet::FNetForTokenClassification;
-use crate::longformer::LongformerForTokenClassification;
-use crate::mobilebert::MobileBertForTokenClassification;
+#[cfg(feature = "libtorch")]
+use crate::pipelines::common::cast_var_store;
 use crate::pipelines::common::{
-    cast_var_store, get_device, ConfigOption, ModelResource, ModelType, TokenizerOption,
+    get_device, ConfigOption, ModelResource, ModelType, TokenizerOption,
 };
 use crate::resources::ResourceProvider;
-use crate::roberta::RobertaForTokenClassification;
-use crate::xlnet::XLNetForTokenClassification;
 use ordered_float::OrderedFloat;
+
+#[cfg(feature = "libtorch")]
+mod torch_models {
+    pub use crate::albert::AlbertForTokenClassification;
+    pub use crate::bert::BertForTokenClassification;
+    pub use crate::deberta::DebertaForTokenClassification;
+    pub use crate::deberta_v2::DebertaV2ForTokenClassification;
+    pub use crate::distilbert::DistilBertForTokenClassification;
+    pub use crate::electra::ElectraForTokenClassification;
+    pub use crate::fnet::FNetForTokenClassification;
+    pub use crate::longformer::LongformerForTokenClassification;
+    pub use crate::mobilebert::MobileBertForTokenClassification;
+    pub use crate::roberta::RobertaForTokenClassification;
+    pub use crate::xlnet::XLNetForTokenClassification;
+}
 use rust_tokenizers::{
     ConsolidatableTokens, ConsolidatedTokenIterator, Mask, Offset, TokenIdsWithOffsets, TokenTrait,
     TokenizedInput,
@@ -135,13 +142,17 @@ use rust_tokenizers::{
 use serde::{Deserialize, Serialize};
 use std::cmp::min;
 use std::collections::HashMap;
-use tch::nn::VarStore;
-use tch::{no_grad, Device, Kind, Tensor};
 
-use crate::deberta_v2::DebertaV2ForTokenClassification;
+use crate::Device;
+use ndarray::{Array1, Array2, ArrayD, ArrayView1};
+#[cfg(feature = "libtorch")]
+use tch::nn::VarStore;
+#[cfg(feature = "libtorch")]
+use tch::{no_grad, Kind, Tensor};
+
 #[cfg(feature = "onnx")]
 use crate::pipelines::onnx::{config::ONNXEnvironmentConfig, ONNXEncoder};
-#[cfg(feature = "remote")]
+#[cfg(all(feature = "remote", feature = "libtorch"))]
 use crate::{
     bert::{BertConfigResources, BertModelResources, BertVocabResources},
     resources::RemoteResource,
@@ -242,7 +253,8 @@ pub struct TokenClassificationConfig {
     pub add_prefix_space: Option<bool>,
     /// Device to place the model on (default: CUDA/GPU when available)
     pub device: Device,
-    /// Model weights precision. If not provided, will default to full precision on CPU, or the loaded weights precision otherwise
+    /// Model weights precision (LibTorch backend only). If not provided, will default to full precision on CPU, or the loaded weights precision otherwise
+    #[cfg(feature = "libtorch")]
     pub kind: Option<Kind>,
     /// Sub-tokens aggregation method (default: `LabelAggregationOption::First`)
     pub label_aggregation_function: LabelAggregationOption,
@@ -286,6 +298,7 @@ impl TokenClassificationConfig {
             strip_accents: strip_accents.into(),
             add_prefix_space: add_prefix_space.into(),
             device: Device::cuda_if_available(),
+            #[cfg(feature = "libtorch")]
             kind: None,
             label_aggregation_function,
             batch_size: 64,
@@ -293,7 +306,7 @@ impl TokenClassificationConfig {
     }
 }
 
-#[cfg(feature = "remote")]
+#[cfg(all(feature = "remote", feature = "libtorch"))]
 impl Default for TokenClassificationConfig {
     /// Provides a default CoNLL-2003 NER model (English)
     fn default() -> TokenClassificationConfig {
@@ -317,29 +330,41 @@ impl Default for TokenClassificationConfig {
 /// # Abstraction that holds one particular token sequence classifier model, for any of the supported models
 pub enum TokenClassificationOption {
     /// Bert for Token Classification
-    Bert(BertForTokenClassification),
+    #[cfg(feature = "libtorch")]
+    Bert(torch_models::BertForTokenClassification),
     /// DeBERTa for Token Classification
-    Deberta(DebertaForTokenClassification),
+    #[cfg(feature = "libtorch")]
+    Deberta(torch_models::DebertaForTokenClassification),
     /// DeBERTa V2 for Token Classification
-    DebertaV2(DebertaV2ForTokenClassification),
+    #[cfg(feature = "libtorch")]
+    DebertaV2(torch_models::DebertaV2ForTokenClassification),
     /// DistilBert for Token Classification
-    DistilBert(DistilBertForTokenClassification),
+    #[cfg(feature = "libtorch")]
+    DistilBert(torch_models::DistilBertForTokenClassification),
     /// MobileBert for Token Classification
-    MobileBert(MobileBertForTokenClassification),
+    #[cfg(feature = "libtorch")]
+    MobileBert(torch_models::MobileBertForTokenClassification),
     /// Roberta for Token Classification
-    Roberta(RobertaForTokenClassification),
+    #[cfg(feature = "libtorch")]
+    Roberta(torch_models::RobertaForTokenClassification),
     /// XLM Roberta for Token Classification
-    XLMRoberta(RobertaForTokenClassification),
+    #[cfg(feature = "libtorch")]
+    XLMRoberta(torch_models::RobertaForTokenClassification),
     /// Electra for Token Classification
-    Electra(ElectraForTokenClassification),
+    #[cfg(feature = "libtorch")]
+    Electra(torch_models::ElectraForTokenClassification),
     /// Albert for Token Classification
-    Albert(AlbertForTokenClassification),
+    #[cfg(feature = "libtorch")]
+    Albert(torch_models::AlbertForTokenClassification),
     /// XLNet for Token Classification
-    XLNet(XLNetForTokenClassification),
+    #[cfg(feature = "libtorch")]
+    XLNet(torch_models::XLNetForTokenClassification),
     /// Longformer for Token Classification
-    Longformer(LongformerForTokenClassification),
+    #[cfg(feature = "libtorch")]
+    Longformer(torch_models::LongformerForTokenClassification),
     /// FNet for Token Classification
-    FNet(FNetForTokenClassification),
+    #[cfg(feature = "libtorch")]
+    FNet(torch_models::FNetForTokenClassification),
     /// ONNX model for Token Classification
     #[cfg(feature = "onnx")]
     ONNX(ONNXEncoder),
@@ -354,14 +379,20 @@ impl TokenClassificationOption {
     ///   `ModelResources` (Torch or ONNX) and `ModelType` (Architecture for Torch models) variants provided and
     pub fn new(config: &TokenClassificationConfig) -> Result<Self, RustBertError> {
         match config.model_resource {
+            #[cfg(feature = "libtorch")]
             ModelResource::Torch(_) => Self::new_torch(config),
             #[cfg(feature = "onnx")]
             ModelResource::ONNX(_) => Self::new_onnx(config),
+            #[cfg(all(feature = "onnx", not(feature = "libtorch")))]
+            _ => Err(RustBertError::InvalidConfigurationError(
+                "Torch model resources require the `libtorch` feature".to_string(),
+            )),
         }
     }
 
+    #[cfg(feature = "libtorch")]
     fn new_torch(config: &TokenClassificationConfig) -> Result<Self, RustBertError> {
-        let device = config.device;
+        let device: tch::Device = config.device.into();
         let weights_path = config.model_resource.get_torch_local_path()?;
         let mut var_store = VarStore::new(device);
         let model_config =
@@ -371,7 +402,7 @@ impl TokenClassificationOption {
             ModelType::Bert => {
                 if let ConfigOption::Bert(config) = model_config {
                     Ok(Self::Bert(
-                        BertForTokenClassification::new(var_store.root(), config)?,
+                        torch_models::BertForTokenClassification::new(var_store.root(), config)?,
                     ))
                 } else {
                     Err(RustBertError::InvalidConfigurationError(
@@ -382,7 +413,7 @@ impl TokenClassificationOption {
             ModelType::Deberta => {
                 if let ConfigOption::Deberta(config) = model_config {
                     Ok(Self::Deberta(
-                        DebertaForTokenClassification::new(var_store.root(), config)?,
+                        torch_models::DebertaForTokenClassification::new(var_store.root(), config)?,
                     ))
                 } else {
                     Err(RustBertError::InvalidConfigurationError(
@@ -393,7 +424,7 @@ impl TokenClassificationOption {
             ModelType::DebertaV2 => {
                 if let ConfigOption::DebertaV2(config) = model_config {
                     Ok(Self::DebertaV2(
-                        DebertaV2ForTokenClassification::new(var_store.root(), config)?,
+                        torch_models::DebertaV2ForTokenClassification::new(var_store.root(), config)?,
                     ))
                 } else {
                     Err(RustBertError::InvalidConfigurationError(
@@ -404,7 +435,7 @@ impl TokenClassificationOption {
             ModelType::DistilBert => {
                 if let ConfigOption::DistilBert(config) = model_config {
                     Ok(Self::DistilBert(
-                        DistilBertForTokenClassification::new(var_store.root(), config)?,
+                        torch_models::DistilBertForTokenClassification::new(var_store.root(), config)?,
                     ))
                 } else {
                     Err(RustBertError::InvalidConfigurationError(
@@ -415,7 +446,7 @@ impl TokenClassificationOption {
             ModelType::MobileBert => {
                 if let ConfigOption::MobileBert(config) = model_config {
                     Ok(Self::MobileBert(
-                        MobileBertForTokenClassification::new(var_store.root(), config)?,
+                        torch_models::MobileBertForTokenClassification::new(var_store.root(), config)?,
                     ))
                 } else {
                     Err(RustBertError::InvalidConfigurationError(
@@ -426,7 +457,7 @@ impl TokenClassificationOption {
             ModelType::Roberta => {
                 if let ConfigOption::Roberta(config) = model_config {
                     Ok(Self::Roberta(
-                        RobertaForTokenClassification::new(var_store.root(), config)?,
+                        torch_models::RobertaForTokenClassification::new(var_store.root(), config)?,
                     ))
                 } else {
                     Err(RustBertError::InvalidConfigurationError(
@@ -437,7 +468,7 @@ impl TokenClassificationOption {
             ModelType::XLMRoberta => {
                 if let ConfigOption::Roberta(config) = model_config {
                     Ok(Self::XLMRoberta(
-                        RobertaForTokenClassification::new(var_store.root(), config)?,
+                        torch_models::RobertaForTokenClassification::new(var_store.root(), config)?,
                     ))
                 } else {
                     Err(RustBertError::InvalidConfigurationError(
@@ -448,7 +479,7 @@ impl TokenClassificationOption {
             ModelType::Electra => {
                 if let ConfigOption::Electra(config) = model_config {
                     Ok(Self::Electra(
-                        ElectraForTokenClassification::new(var_store.root(), config)?,
+                        torch_models::ElectraForTokenClassification::new(var_store.root(), config)?,
                     ))
                 } else {
                     Err(RustBertError::InvalidConfigurationError(
@@ -459,7 +490,7 @@ impl TokenClassificationOption {
             ModelType::Albert => {
                 if let ConfigOption::Albert(config) = model_config {
                     Ok(Self::Albert(
-                        AlbertForTokenClassification::new(var_store.root(), config)?,
+                        torch_models::AlbertForTokenClassification::new(var_store.root(), config)?,
                     ))
                 } else {
                     Err(RustBertError::InvalidConfigurationError(
@@ -470,7 +501,7 @@ impl TokenClassificationOption {
             ModelType::XLNet => {
                 if let ConfigOption::XLNet(config) = model_config {
                     Ok(Self::XLNet(
-                        XLNetForTokenClassification::new(var_store.root(), config)?,
+                        torch_models::XLNetForTokenClassification::new(var_store.root(), config)?,
                     ))
                 } else {
                     Err(RustBertError::InvalidConfigurationError(
@@ -481,7 +512,7 @@ impl TokenClassificationOption {
             ModelType::Longformer => {
                 if let ConfigOption::Longformer(config) = model_config {
                     Ok(Self::Longformer(
-                        LongformerForTokenClassification::new(var_store.root(), config)?,
+                        torch_models::LongformerForTokenClassification::new(var_store.root(), config)?,
                     ))
                 } else {
                     Err(RustBertError::InvalidConfigurationError(
@@ -492,7 +523,7 @@ impl TokenClassificationOption {
             ModelType::FNet => {
                 if let ConfigOption::FNet(config) = model_config {
                     Ok(Self::FNet(
-                        FNetForTokenClassification::new(var_store.root(), config)?,
+                        torch_models::FNetForTokenClassification::new(var_store.root(), config)?,
                     ))
                 } else {
                     Err(RustBertError::InvalidConfigurationError(
@@ -515,7 +546,7 @@ impl TokenClassificationOption {
 
     #[cfg(feature = "onnx")]
     pub fn new_onnx(config: &TokenClassificationConfig) -> Result<Self, RustBertError> {
-        let onnx_config = ONNXEnvironmentConfig::from_device(crate::Device::from(config.device));
+        let onnx_config = ONNXEnvironmentConfig::from_device(config.device);
         let encoder_file = config
             .model_resource
             .get_onnx_local_paths()?
@@ -531,17 +562,29 @@ impl TokenClassificationOption {
     /// Returns the `ModelType` for this TokenClassificationOption
     pub fn model_type(&self) -> ModelType {
         match *self {
+            #[cfg(feature = "libtorch")]
             Self::Bert(_) => ModelType::Bert,
+            #[cfg(feature = "libtorch")]
             Self::Deberta(_) => ModelType::Deberta,
+            #[cfg(feature = "libtorch")]
             Self::DebertaV2(_) => ModelType::DebertaV2,
+            #[cfg(feature = "libtorch")]
             Self::Roberta(_) => ModelType::Roberta,
+            #[cfg(feature = "libtorch")]
             Self::XLMRoberta(_) => ModelType::XLMRoberta,
+            #[cfg(feature = "libtorch")]
             Self::DistilBert(_) => ModelType::DistilBert,
+            #[cfg(feature = "libtorch")]
             Self::MobileBert(_) => ModelType::MobileBert,
+            #[cfg(feature = "libtorch")]
             Self::Electra(_) => ModelType::Electra,
+            #[cfg(feature = "libtorch")]
             Self::Albert(_) => ModelType::Albert,
+            #[cfg(feature = "libtorch")]
             Self::XLNet(_) => ModelType::XLNet,
+            #[cfg(feature = "libtorch")]
             Self::Longformer(_) => ModelType::Longformer,
+            #[cfg(feature = "libtorch")]
             Self::FNet(_) => ModelType::FNet,
             #[cfg(feature = "onnx")]
             Self::ONNX(_) => ModelType::ONNX,
@@ -550,163 +593,202 @@ impl TokenClassificationOption {
 
     fn forward_t(
         &self,
-        input_ids: Option<&Tensor>,
-        mask: Option<&Tensor>,
-        token_type_ids: Option<&Tensor>,
-        position_ids: Option<&Tensor>,
-        input_embeds: Option<&Tensor>,
+        input_ids: Option<&ArrayD<i64>>,
+        mask: Option<&ArrayD<i64>>,
+        token_type_ids: Option<&ArrayD<i64>>,
+        position_ids: Option<&ArrayD<i64>>,
+        input_embeds: Option<&ArrayD<f32>>,
         train: bool,
-    ) -> Tensor {
-        match *self {
-            Self::Bert(ref model) => {
-                model
-                    .forward_t(
-                        input_ids,
-                        mask,
-                        token_type_ids,
-                        position_ids,
-                        input_embeds,
-                        train,
-                    )
-                    .logits
-            }
-            Self::Deberta(ref model) => {
-                model
-                    .forward_t(
-                        input_ids,
-                        mask,
-                        token_type_ids,
-                        position_ids,
-                        input_embeds,
-                        train,
-                    )
-                    .expect("Error in DeBERTa forward_t")
-                    .logits
-            }
-            Self::DebertaV2(ref model) => {
-                model
-                    .forward_t(
-                        input_ids,
-                        mask,
-                        token_type_ids,
-                        position_ids,
-                        input_embeds,
-                        train,
-                    )
-                    .expect("Error in DeBERTa V2 forward_t")
-                    .logits
-            }
-            Self::DistilBert(ref model) => {
-                model
-                    .forward_t(input_ids, mask, input_embeds, train)
-                    .expect("Error in distilbert forward_t")
-                    .logits
-            }
-            Self::MobileBert(ref model) => {
-                model
-                    .forward_t(input_ids, None, None, input_embeds, mask, train)
-                    .expect("Error in mobilebert forward_t")
-                    .logits
-            }
-            Self::Roberta(ref model) | Self::XLMRoberta(ref model) => {
-                model
-                    .forward_t(
-                        input_ids,
-                        mask,
-                        token_type_ids,
-                        position_ids,
-                        input_embeds,
-                        train,
-                    )
-                    .logits
-            }
-            Self::Electra(ref model) => {
-                model
-                    .forward_t(
-                        input_ids,
-                        mask,
-                        token_type_ids,
-                        position_ids,
-                        input_embeds,
-                        train,
-                    )
-                    .logits
-            }
-            Self::Albert(ref model) => {
-                model
-                    .forward_t(
-                        input_ids,
-                        mask,
-                        token_type_ids,
-                        position_ids,
-                        input_embeds,
-                        train,
-                    )
-                    .logits
-            }
-            Self::XLNet(ref model) => {
-                model
-                    .forward_t(
-                        input_ids,
-                        mask,
-                        None,
-                        None,
-                        None,
-                        token_type_ids,
-                        input_embeds,
-                        train,
-                    )
-                    .logits
-            }
-            Self::Longformer(ref model) => {
-                model
-                    .forward_t(
-                        input_ids,
-                        mask,
-                        None,
-                        token_type_ids,
-                        position_ids,
-                        input_embeds,
-                        train,
-                    )
-                    .expect("Error in longformer forward_t")
-                    .logits
-            }
-            Self::FNet(ref model) => {
-                model
-                    .forward_t(input_ids, token_type_ids, position_ids, input_embeds, train)
-                    .expect("Error in fnet forward_t")
-                    .logits
-            }
-            #[cfg(feature = "onnx")]
-            #[cfg(feature = "onnx")]
-            Self::ONNX(ref model) => {
-                use crate::common::tensor_conversion::{
-                    array_to_tensor_f32, tensor_to_array_f32, tensor_to_array_i64,
-                };
-                let ids = |t: &Tensor| {
-                    tensor_to_array_i64(t).expect("Error converting input tensor to ndarray")
-                };
-                let flt = |t: &Tensor| {
-                    tensor_to_array_f32(t).expect("Error converting input tensor to ndarray")
-                };
-                let input_ids = input_ids.map(|t| ids(t));
-                let mask = mask.map(|t| ids(t));
-                let token_type_ids = token_type_ids.map(|t| ids(t));
-                let position_ids = position_ids.map(|t| ids(t));
-                let input_embeds = input_embeds.map(|t| flt(t));
-                model
+    ) -> ArrayD<f32> {
+        #[cfg(feature = "libtorch")]
+        {
+            use crate::common::tensor_conversion::tensor_to_array_f32;
+            use crate::pipelines::common::{to_tensor_f32, to_tensor_i64};
+            let input_ids_array = input_ids;
+            let mask_array = mask;
+            let token_type_ids_array = token_type_ids;
+            let position_ids_array = position_ids;
+            let input_embeds_array = input_embeds;
+            let input_ids = to_tensor_i64(input_ids);
+            let mask = to_tensor_i64(mask);
+            let token_type_ids = to_tensor_i64(token_type_ids);
+            let position_ids = to_tensor_i64(position_ids);
+            let input_embeds = to_tensor_f32(input_embeds);
+            match *self {
+                Self::Bert(ref model) => tensor_to_array_f32(
+                    &model
+                        .forward_t(
+                            input_ids.as_ref(),
+                            mask.as_ref(),
+                            token_type_ids.as_ref(),
+                            position_ids.as_ref(),
+                            input_embeds.as_ref(),
+                            train,
+                        )
+                        .logits,
+                )
+                .expect("Error converting model output to ndarray"),
+                Self::Deberta(ref model) => tensor_to_array_f32(
+                    &model
+                        .forward_t(
+                            input_ids.as_ref(),
+                            mask.as_ref(),
+                            token_type_ids.as_ref(),
+                            position_ids.as_ref(),
+                            input_embeds.as_ref(),
+                            train,
+                        )
+                        .expect("Error in DeBERTa forward_t")
+                        .logits,
+                )
+                .expect("Error converting model output to ndarray"),
+                Self::DebertaV2(ref model) => tensor_to_array_f32(
+                    &model
+                        .forward_t(
+                            input_ids.as_ref(),
+                            mask.as_ref(),
+                            token_type_ids.as_ref(),
+                            position_ids.as_ref(),
+                            input_embeds.as_ref(),
+                            train,
+                        )
+                        .expect("Error in DeBERTa V2 forward_t")
+                        .logits,
+                )
+                .expect("Error converting model output to ndarray"),
+                Self::DistilBert(ref model) => tensor_to_array_f32(
+                    &model
+                        .forward_t(
+                            input_ids.as_ref(),
+                            mask.as_ref(),
+                            input_embeds.as_ref(),
+                            train,
+                        )
+                        .expect("Error in distilbert forward_t")
+                        .logits,
+                )
+                .expect("Error converting model output to ndarray"),
+                Self::MobileBert(ref model) => tensor_to_array_f32(
+                    &model
+                        .forward_t(
+                            input_ids.as_ref(),
+                            None,
+                            None,
+                            input_embeds.as_ref(),
+                            mask.as_ref(),
+                            train,
+                        )
+                        .expect("Error in mobilebert forward_t")
+                        .logits,
+                )
+                .expect("Error converting model output to ndarray"),
+                #[cfg(feature = "libtorch")]
+                Self::Roberta(ref model) | Self::XLMRoberta(ref model) => tensor_to_array_f32(
+                    &model
+                        .forward_t(
+                            input_ids.as_ref(),
+                            mask.as_ref(),
+                            token_type_ids.as_ref(),
+                            position_ids.as_ref(),
+                            input_embeds.as_ref(),
+                            train,
+                        )
+                        .logits,
+                )
+                .expect("Error converting model output to ndarray"),
+                Self::Electra(ref model) => tensor_to_array_f32(
+                    &model
+                        .forward_t(
+                            input_ids.as_ref(),
+                            mask.as_ref(),
+                            token_type_ids.as_ref(),
+                            position_ids.as_ref(),
+                            input_embeds.as_ref(),
+                            train,
+                        )
+                        .logits,
+                )
+                .expect("Error converting model output to ndarray"),
+                Self::Albert(ref model) => tensor_to_array_f32(
+                    &model
+                        .forward_t(
+                            input_ids.as_ref(),
+                            mask.as_ref(),
+                            token_type_ids.as_ref(),
+                            position_ids.as_ref(),
+                            input_embeds.as_ref(),
+                            train,
+                        )
+                        .logits,
+                )
+                .expect("Error converting model output to ndarray"),
+                Self::XLNet(ref model) => tensor_to_array_f32(
+                    &model
+                        .forward_t(
+                            input_ids.as_ref(),
+                            mask.as_ref(),
+                            None,
+                            None,
+                            None,
+                            token_type_ids.as_ref(),
+                            input_embeds.as_ref(),
+                            train,
+                        )
+                        .logits,
+                )
+                .expect("Error converting model output to ndarray"),
+                Self::Longformer(ref model) => tensor_to_array_f32(
+                    &model
+                        .forward_t(
+                            input_ids.as_ref(),
+                            mask.as_ref(),
+                            None,
+                            token_type_ids.as_ref(),
+                            position_ids.as_ref(),
+                            input_embeds.as_ref(),
+                            train,
+                        )
+                        .expect("Error in longformer forward_t")
+                        .logits,
+                )
+                .expect("Error converting model output to ndarray"),
+                Self::FNet(ref model) => tensor_to_array_f32(
+                    &model
+                        .forward_t(
+                            input_ids.as_ref(),
+                            token_type_ids.as_ref(),
+                            position_ids.as_ref(),
+                            input_embeds.as_ref(),
+                            train,
+                        )
+                        .expect("Error in fnet forward_t")
+                        .logits,
+                )
+                .expect("Error converting model output to ndarray"),
+                #[cfg(feature = "onnx")]
+                Self::ONNX(ref model) => model
                     .forward(
-                        input_ids.as_ref(),
-                        mask.as_ref(),
-                        token_type_ids.as_ref(),
-                        position_ids.as_ref(),
-                        input_embeds.as_ref(),
+                        input_ids_array,
+                        mask_array,
+                        token_type_ids_array,
+                        position_ids_array,
+                        input_embeds_array,
                     )
                     .expect("Error in ONNX forward pass.")
                     .logits
-                    .map(|array| array_to_tensor_f32(&array).expect("Error converting ONNX output"))
-                    .unwrap()
+                    .unwrap(),
+            }
+        }
+        #[cfg(not(feature = "libtorch"))]
+        {
+            match *self {
+                #[cfg(feature = "onnx")]
+                Self::ONNX(ref model) => model
+                    .forward(input_ids, mask, token_type_ids, position_ids, input_embeds)
+                    .expect("Error in ONNX forward pass.")
+                    .logits
+                    .unwrap(),
+                _ => unreachable!("no inference backend available"),
             }
         }
     }
@@ -995,26 +1077,23 @@ impl TokenClassificationModel {
         while start < len_features {
             let end = start + min(len_features - start, self.batch_size);
 
-            no_grad(|| {
+            {
                 let batch_features = &mut features[start..end];
                 let (input_ids, attention_masks, token_type_ids) =
                     self.pad_features(batch_features);
                 let output = self.token_sequence_classifier.forward_t(
-                    Some(&input_ids),
-                    Some(&attention_masks),
-                    Some(&token_type_ids),
+                    Some(&input_ids.clone().into_dyn()),
+                    Some(&attention_masks.into_dyn()),
+                    Some(&token_type_ids.into_dyn()),
                     None,
                     None,
                     false,
                 );
-                let score = output.exp()
-                    / output
-                        .exp()
-                        .sum_dim_intlist([-1].as_slice(), true, Kind::Float);
-                let label_indices = score.argmax(-1, true);
-                for sentence_idx in 0..label_indices.size()[0] {
-                    let labels = label_indices.get(sentence_idx);
-                    let feature = &features[sentence_idx as usize];
+                let score = crate::common::tensor_ops::softmax_last_dim(&output);
+                let label_indices = crate::common::tensor_ops::argmax_last_dim(&score);
+                for sentence_idx in 0..label_indices.shape()[0] {
+                    let labels = label_indices.index_axis(ndarray::Axis(0), sentence_idx);
+                    let feature = &features[sentence_idx];
                     let sentence_reference_flag = &feature.reference_feature;
                     let original_chars = input[feature.example_index]
                         .as_ref()
@@ -1042,14 +1121,14 @@ impl TokenClassificationModel {
                                 &labels,
                                 &score,
                                 sentence_idx,
-                                position_idx as i64,
+                                position_idx,
                                 word_idx,
                             )
                         };
                         example_tokens_map[feature.example_index].push(token);
                     }
                 }
-            });
+            }
             start = end;
         }
         let mut tokens = example_tokens_map;
@@ -1060,24 +1139,15 @@ impl TokenClassificationModel {
         tokens
     }
 
-    fn pad_features(&self, features: &mut [InputFeature]) -> (Tensor, Tensor, Tensor) {
+    fn pad_features(
+        &self,
+        features: &mut [InputFeature],
+    ) -> (Array2<i64>, Array2<i64>, Array2<i64>) {
         let max_len = features
             .iter()
             .map(|feature| feature.input_ids.len())
             .max()
             .unwrap();
-
-        let attention_masks = features
-            .iter()
-            .map(|feature| &feature.input_ids)
-            .map(|input| {
-                let mut attention_mask = Vec::with_capacity(max_len);
-                attention_mask.resize(input.len(), 1i64);
-                attention_mask.resize(max_len, 0i64);
-                attention_mask
-            })
-            .map(|input| Tensor::from_slice(&(input)))
-            .collect::<Vec<_>>();
 
         let padding_index = self
             .tokenizer
@@ -1092,19 +1162,18 @@ impl TokenClassificationModel {
             feature.reference_feature.resize(max_len, false);
         }
 
-        let padded_input_ids = features
-            .iter()
-            .map(|input| Tensor::from_slice(input.input_ids.as_slice()))
-            .collect::<Vec<_>>();
-
-        let padded_token_type_ids = features
-            .iter()
-            .map(|input| Tensor::from_slice(input.token_type_ids.as_slice()))
-            .collect::<Vec<_>>();
-
-        let input_ids = Tensor::stack(&padded_input_ids, 0).to(self.device);
-        let attention_masks = Tensor::stack(&attention_masks, 0).to(self.device);
-        let token_type_ids = Tensor::stack(&padded_token_type_ids, 0).to(self.device);
+        let mut input_ids = Array2::<i64>::zeros((features.len(), max_len));
+        let mut attention_masks = Array2::<i64>::zeros((features.len(), max_len));
+        let mut token_type_ids = Array2::<i64>::zeros((features.len(), max_len));
+        for (row, feature) in features.iter().enumerate() {
+            for (col, &id) in feature.input_ids.iter().enumerate() {
+                input_ids[[row, col]] = id;
+                attention_masks[[row, col]] = 1;
+            }
+            for (col, &segment) in feature.token_type_ids.iter().enumerate() {
+                token_type_ids[[row, col]] = segment as i64;
+            }
+        }
         (input_ids, attention_masks, token_type_ids)
     }
 
@@ -1112,15 +1181,15 @@ impl TokenClassificationModel {
         &self,
         original_sentence_chars: &[char],
         sentence_tokens: &InputFeature,
-        input_tensor: &Tensor,
-        labels: &Tensor,
-        score: &Tensor,
-        sentence_idx: i64,
-        position_idx: i64,
+        input_tensor: &Array2<i64>,
+        labels: &ndarray::ArrayViewD<i64>,
+        score: &ArrayD<f32>,
+        sentence_idx: usize,
+        position_idx: usize,
         word_index: u16,
     ) -> Token {
-        let label_id = labels.int64_value(&[position_idx]);
-        let token_id = input_tensor.int64_value(&[sentence_idx, position_idx]);
+        let label_id = labels[position_idx];
+        let token_id = input_tensor[[sentence_idx, position_idx]];
 
         let offsets = &sentence_tokens.offsets[position_idx as usize];
 
@@ -1138,14 +1207,14 @@ impl TokenClassificationModel {
 
         Token {
             text,
-            score: score.double_value(&[sentence_idx, position_idx, label_id]),
+            score: score[[sentence_idx, position_idx, label_id as usize]] as f64,
             label: self
                 .label_mapping
                 .get(&label_id)
                 .expect("Index out of vocabulary bounds.")
                 .to_owned(),
             label_index: label_id,
-            sentence: sentence_idx as usize,
+            sentence: sentence_idx,
             index: position_idx as u16,
             word_index,
             offset: offsets.to_owned(),

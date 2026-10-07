@@ -53,15 +53,21 @@
 //! # }
 //! ```
 
+#[cfg(feature = "libtorch")]
 mod albert_model;
+#[cfg(feature = "libtorch")]
 mod attention;
+pub mod config;
+#[cfg(feature = "libtorch")]
 mod embeddings;
+#[cfg(feature = "libtorch")]
 mod encoder;
 
+#[cfg(feature = "libtorch")]
 pub use albert_model::{
-    AlbertConfig, AlbertConfigResources, AlbertForMaskedLM, AlbertForMultipleChoice,
-    AlbertForQuestionAnswering, AlbertForSentenceEmbeddings, AlbertForSequenceClassification,
-    AlbertForTokenClassification, AlbertMaskedLMOutput, AlbertModel, AlbertModelResources,
-    AlbertOutput, AlbertQuestionAnsweringOutput, AlbertSequenceClassificationOutput,
-    AlbertTokenClassificationOutput, AlbertVocabResources,
+    AlbertForMaskedLM, AlbertForMultipleChoice, AlbertForQuestionAnswering,
+    AlbertForSentenceEmbeddings, AlbertForSequenceClassification, AlbertForTokenClassification,
+    AlbertMaskedLMOutput, AlbertModel, AlbertOutput, AlbertQuestionAnsweringOutput,
+    AlbertSequenceClassificationOutput, AlbertTokenClassificationOutput,
 };
+pub use config::{AlbertConfig, AlbertConfigResources, AlbertModelResources, AlbertVocabResources};

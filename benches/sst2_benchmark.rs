@@ -4,12 +4,12 @@ extern crate criterion;
 use criterion::Criterion;
 use rust_bert::pipelines::sentiment::SentimentModel;
 use rust_bert::pipelines::sequence_classification::SequenceClassificationConfig;
+use rust_bert::Device;
 use serde::Deserialize;
 use std::error::Error;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use std::{env, fs};
-use tch::Device;
 
 static BATCH_SIZE: usize = 64;
 

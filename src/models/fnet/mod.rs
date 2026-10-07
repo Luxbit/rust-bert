@@ -51,15 +51,21 @@
 //! # }
 //! ```
 
+#[cfg(feature = "libtorch")]
 mod attention;
+pub mod config;
+#[cfg(feature = "libtorch")]
 mod embeddings;
+#[cfg(feature = "libtorch")]
 mod encoder;
+#[cfg(feature = "libtorch")]
 mod fnet_model;
 
+pub use config::{FNetConfig, FNetConfigResources, FNetModelResources, FNetVocabResources};
+#[cfg(feature = "libtorch")]
 pub use fnet_model::{
-    FNetConfig, FNetConfigResources, FNetForMaskedLM, FNetForMultipleChoice,
-    FNetForQuestionAnswering, FNetForSequenceClassification, FNetForTokenClassification,
-    FNetMaskedLMOutput, FNetModel, FNetModelOutput, FNetModelResources,
-    FNetQuestionAnsweringOutput, FNetSequenceClassificationOutput, FNetTokenClassificationOutput,
-    FNetVocabResources,
+    FNetForMaskedLM, FNetForMultipleChoice, FNetForQuestionAnswering,
+    FNetForSequenceClassification, FNetForTokenClassification, FNetMaskedLMOutput, FNetModel,
+    FNetModelOutput, FNetQuestionAnsweringOutput, FNetSequenceClassificationOutput,
+    FNetTokenClassificationOutput,
 };

@@ -731,7 +731,6 @@ extern crate core;
 compile_error!("rust-bert requires at least one inference backend: enable the `libtorch` feature (enabled by default) and/or the `onnx` feature.");
 
 mod common;
-#[cfg(feature = "libtorch")]
 pub mod models;
 pub mod pipelines;
 
@@ -741,9 +740,11 @@ pub use common::resources;
 #[cfg(feature = "libtorch")]
 pub use common::Activation;
 pub use common::Config;
+pub use models::{
+    albert, bert, deberta, deberta_v2, distilbert, electra, fnet, longformer, mobilebert, xlnet,
+};
 #[cfg(feature = "libtorch")]
 pub use models::{
-    albert, bart, bert, deberta, deberta_v2, distilbert, electra, fnet, gpt2, gpt_j, gpt_neo,
-    longformer, longt5, m2m_100, marian, mbart, mobilebert, nllb, openai_gpt, pegasus, prophetnet,
-    reformer, roberta, t5, xlnet,
+    bart, gpt2, gpt_j, gpt_neo, longt5, m2m_100, marian, mbart, nllb, openai_gpt, pegasus,
+    prophetnet, reformer, roberta, t5,
 };

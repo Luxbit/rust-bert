@@ -10,12 +10,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::common::activations::{Activation, TensorFunction};
+use crate::common::activations::Activation;
+#[cfg(feature = "libtorch")]
+use crate::common::activations::TensorFunction;
+#[cfg(feature = "libtorch")]
 use crate::common::dropout::Dropout;
+#[cfg(feature = "libtorch")]
 use crate::xlnet::XLNetConfig;
+#[cfg(feature = "libtorch")]
 use crate::RustBertError;
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "libtorch")]
 use std::borrow::Borrow;
+#[cfg(feature = "libtorch")]
 use tch::{nn, Tensor};
 
 #[allow(non_camel_case_types)]
@@ -43,6 +50,7 @@ pub struct SummaryConfig {
     pub hidden_size: i64,
 }
 
+#[cfg(feature = "libtorch")]
 impl From<&XLNetConfig> for SummaryConfig {
     fn from(config: &XLNetConfig) -> Self {
         let num_labels = config
@@ -63,6 +71,7 @@ impl From<&XLNetConfig> for SummaryConfig {
     }
 }
 
+#[cfg(feature = "libtorch")]
 pub struct SequenceSummary {
     summary: Option<nn::Linear>,
     summary_type: SummaryType,
@@ -71,6 +80,7 @@ pub struct SequenceSummary {
     last_dropout: Option<Dropout>,
 }
 
+#[cfg(feature = "libtorch")]
 impl SequenceSummary {
     pub fn new<'p, P>(p: P, config: &SummaryConfig) -> Result<SequenceSummary, RustBertError>
     where

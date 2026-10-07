@@ -1,8 +1,7 @@
-#[cfg(all(feature = "onnx", feature = "libtorch"))]
+#[cfg(feature = "onnx")]
 mod tests {
     extern crate anyhow;
 
-    use rust_bert::m2m_100::{M2M100SourceLanguages, M2M100TargetLanguages};
     use rust_bert::pipelines::common::{ModelResource, ModelType, ONNXModelResources};
     use rust_bert::pipelines::masked_language::{MaskedLanguageConfig, MaskedLanguageModel};
     use rust_bert::pipelines::ner::NERModel;
@@ -11,13 +10,11 @@ mod tests {
     };
     use rust_bert::pipelines::sentiment::{SentimentModel, SentimentPolarity};
     use rust_bert::pipelines::sequence_classification::SequenceClassificationConfig;
-    use rust_bert::pipelines::text_generation::{TextGenerationConfig, TextGenerationModel};
     use rust_bert::pipelines::token_classification::{
         LabelAggregationOption, TokenClassificationConfig,
     };
-    use rust_bert::pipelines::translation::{Language, TranslationConfig, TranslationModel};
+    #[cfg(feature = "remote")]
     use rust_bert::resources::RemoteResource;
-    use tch::Device;
 
     #[test]
     fn onnx_masked_lm() -> anyhow::Result<()> {
@@ -187,109 +184,120 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn onnx_text_generation() -> anyhow::Result<()> {
-        let text_generation_model = TextGenerationModel::new(TextGenerationConfig {
-            model_type: ModelType::GPT2,
-            model_resource: ModelResource::ONNX(ONNXModelResources {
-                encoder_resource: None,
-                decoder_resource: Some(Box::new(RemoteResource::new(
-                    "https://huggingface.co/optimum/gpt2/resolve/main/decoder_model.onnx",
+    // The generation and translation pipelines are still tch-based; their ONNX
+    // tests require the `libtorch` feature until the generation stack is ported.
+    #[cfg(feature = "libtorch")]
+    mod generation_tests {
+        use rust_bert::m2m_100::{M2M100SourceLanguages, M2M100TargetLanguages};
+        use rust_bert::pipelines::common::{ModelResource, ModelType, ONNXModelResources};
+        use rust_bert::pipelines::text_generation::{TextGenerationConfig, TextGenerationModel};
+        use rust_bert::pipelines::translation::{Language, TranslationConfig, TranslationModel};
+        use rust_bert::resources::RemoteResource;
+        use tch::Device;
+        #[test]
+        fn onnx_text_generation() -> anyhow::Result<()> {
+            let text_generation_model = TextGenerationModel::new(TextGenerationConfig {
+                model_type: ModelType::GPT2,
+                model_resource: ModelResource::ONNX(ONNXModelResources {
+                    encoder_resource: None,
+                    decoder_resource: Some(Box::new(RemoteResource::new(
+                        "https://huggingface.co/optimum/gpt2/resolve/main/decoder_model.onnx",
+                        "onnx-gpt2",
+                    ))),
+                    decoder_with_past_resource: Some(Box::new(RemoteResource::new(
+                        "https://huggingface.co/optimum/gpt2/resolve/main/decoder_with_past_model.onnx",
+                        "onnx-gpt2",
+                    ))),
+                }),
+                config_resource: Box::new(RemoteResource::new(
+                    "https://huggingface.co/optimum/gpt2/resolve/main/config.json",
+                    "onnx-gpt2",
+                )),
+                vocab_resource: Box::new(RemoteResource::new(
+                    "https://huggingface.co/gpt2/resolve/main/vocab.json",
+                    "onnx-gpt2",
+                )),
+                merges_resource: Some(Box::new(RemoteResource::new(
+                    "https://huggingface.co/gpt2/resolve/main/merges.txt",
                     "onnx-gpt2",
                 ))),
-                decoder_with_past_resource: Some(Box::new(RemoteResource::new(
-                    "https://huggingface.co/optimum/gpt2/resolve/main/decoder_with_past_model.onnx",
-                    "onnx-gpt2",
-                ))),
-            }),
-            config_resource: Box::new(RemoteResource::new(
-                "https://huggingface.co/optimum/gpt2/resolve/main/config.json",
-                "onnx-gpt2",
-            )),
-            vocab_resource: Box::new(RemoteResource::new(
-                "https://huggingface.co/gpt2/resolve/main/vocab.json",
-                "onnx-gpt2",
-            )),
-            merges_resource: Some(Box::new(RemoteResource::new(
-                "https://huggingface.co/gpt2/resolve/main/merges.txt",
-                "onnx-gpt2",
-            ))),
-            max_length: Some(30),
-            do_sample: false,
-            num_beams: 1,
-            temperature: 1.0,
-            num_return_sequences: 1,
-            ..Default::default()
-        })?;
-        let prompts = ["It was a very nice and sunny"];
-        let output = text_generation_model.generate(&prompts, None)?;
-        assert_eq!(output.len(), 1);
-        assert_eq!(output[0], "It was a very nice and sunny day. I was very happy with the weather. I was very happy with the weather. I was very happy with");
-        Ok(())
-    }
+                max_length: Some(30),
+                do_sample: false,
+                num_beams: 1,
+                temperature: 1.0,
+                num_return_sequences: 1,
+                ..Default::default()
+            })?;
+            let prompts = ["It was a very nice and sunny"];
+            let output = text_generation_model.generate(&prompts, None)?;
+            assert_eq!(output.len(), 1);
+            assert_eq!(output[0], "It was a very nice and sunny day. I was very happy with the weather. I was very happy with the weather. I was very happy with");
+            Ok(())
+        }
 
-    #[test]
-    fn onnx_translation() -> anyhow::Result<()> {
-        let translation_model = TranslationModel::new(TranslationConfig::new(
-            ModelType::M2M100,
-            ModelResource::ONNX(ONNXModelResources {
-                encoder_resource: Some(Box::new(RemoteResource::new(
-                    "https://huggingface.co/optimum/m2m100_418M/resolve/e775f50e63b178d82b8d736fc43fcf5ef15d2f6c/encoder_model.onnx",
+        #[test]
+        fn onnx_translation() -> anyhow::Result<()> {
+            let translation_model = TranslationModel::new(TranslationConfig::new(
+                ModelType::M2M100,
+                ModelResource::ONNX(ONNXModelResources {
+                    encoder_resource: Some(Box::new(RemoteResource::new(
+                        "https://huggingface.co/optimum/m2m100_418M/resolve/e775f50e63b178d82b8d736fc43fcf5ef15d2f6c/encoder_model.onnx",
+                        "onnx-m2m100_418M",
+                    ))),
+                    decoder_resource: Some(Box::new(RemoteResource::new(
+                        "https://huggingface.co/optimum/m2m100_418M/resolve/e775f50e63b178d82b8d736fc43fcf5ef15d2f6c/decoder_model.onnx",
+                        "onnx-m2m100_418M",
+                    ))),
+                    decoder_with_past_resource: Some(Box::new(RemoteResource::new(
+                        "https://huggingface.co/optimum/m2m100_418M/resolve/e775f50e63b178d82b8d736fc43fcf5ef15d2f6c/decoder_with_past_model.onnx",
+                        "onnx-m2m100_418M",
+                    ))),
+                }),
+                RemoteResource::new(
+                    "https://huggingface.co/optimum/m2m100_418M/resolve/main/config.json",
                     "onnx-m2m100_418M",
-                ))),
-                decoder_resource: Some(Box::new(RemoteResource::new(
-                    "https://huggingface.co/optimum/m2m100_418M/resolve/e775f50e63b178d82b8d736fc43fcf5ef15d2f6c/decoder_model.onnx",
+                ),
+                RemoteResource::new(
+                    "https://huggingface.co/optimum/m2m100_418M/resolve/main/vocab.json",
                     "onnx-m2m100_418M",
-                ))),
-                decoder_with_past_resource: Some(Box::new(RemoteResource::new(
-                    "https://huggingface.co/optimum/m2m100_418M/resolve/e775f50e63b178d82b8d736fc43fcf5ef15d2f6c/decoder_with_past_model.onnx",
+                ),
+                Some(RemoteResource::new(
+                    "https://huggingface.co/optimum/m2m100_418M/resolve/main/sentencepiece.bpe.model",
                     "onnx-m2m100_418M",
-                ))),
-            }),
-            RemoteResource::new(
-                "https://huggingface.co/optimum/m2m100_418M/resolve/main/config.json",
-                "onnx-m2m100_418M",
-            ),
-            RemoteResource::new(
-                "https://huggingface.co/optimum/m2m100_418M/resolve/main/vocab.json",
-                "onnx-m2m100_418M",
-            ),
-            Some(RemoteResource::new(
-                "https://huggingface.co/optimum/m2m100_418M/resolve/main/sentencepiece.bpe.model",
-                "onnx-m2m100_418M",
-            )),
-            M2M100SourceLanguages::M2M100_418M,
-            M2M100TargetLanguages::M2M100_418M,
-            Device::cuda_if_available(),
-        ))?;
+                )),
+                M2M100SourceLanguages::M2M100_418M,
+                M2M100TargetLanguages::M2M100_418M,
+                Device::cuda_if_available(),
+            ))?;
 
-        let source_sentence = "This sentence will be translated in multiple languages.";
+            let source_sentence = "This sentence will be translated in multiple languages.";
 
-        let mut outputs = Vec::new();
-        outputs.extend(translation_model.translate(
-            &[source_sentence],
-            Language::English,
-            Language::French,
-        )?);
-        outputs.extend(translation_model.translate(
-            &[source_sentence],
-            Language::English,
-            Language::Spanish,
-        )?);
-        outputs.extend(translation_model.translate(
-            &[source_sentence],
-            Language::English,
-            Language::Hindi,
-        )?);
+            let mut outputs = Vec::new();
+            outputs.extend(translation_model.translate(
+                &[source_sentence],
+                Language::English,
+                Language::French,
+            )?);
+            outputs.extend(translation_model.translate(
+                &[source_sentence],
+                Language::English,
+                Language::Spanish,
+            )?);
+            outputs.extend(translation_model.translate(
+                &[source_sentence],
+                Language::English,
+                Language::Hindi,
+            )?);
 
-        assert_eq!(outputs.len(), 3);
-        assert_eq!(
-            outputs[0],
-            " Cette phrase sera traduite en plusieurs langues."
-        );
-        assert_eq!(outputs[1], " Esta frase se traducirá en varios idiomas.");
-        assert_eq!(outputs[2], " यह वाक्यांश कई भाषाओं में अनुवादित किया जाएगा।");
+            assert_eq!(outputs.len(), 3);
+            assert_eq!(
+                outputs[0],
+                " Cette phrase sera traduite en plusieurs langues."
+            );
+            assert_eq!(outputs[1], " Esta frase se traducirá en varios idiomas.");
+            assert_eq!(outputs[2], " यह वाक्यांश कई भाषाओं में अनुवादित किया जाएगा।");
 
-        Ok(())
+            Ok(())
+        }
     }
 }

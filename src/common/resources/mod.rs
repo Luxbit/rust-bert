@@ -32,7 +32,7 @@ use std::sync::RwLockWriteGuard;
 #[cfg(feature = "libtorch")]
 use tch::nn::VarStore;
 #[cfg(feature = "libtorch")]
-use tch::{Device, Kind};
+use tch::Kind;
 
 pub enum Resource<'a> {
     PathBuf(PathBuf),
@@ -89,7 +89,7 @@ pub fn load_weights(
     rp: &(impl ResourceProvider + ?Sized),
     vs: &mut VarStore,
     kind: Option<Kind>,
-    device: Device,
+    device: tch::Device,
 ) -> Result<(), RustBertError> {
     match rp.get_resource()? {
         Resource::Buffer(mut data) => vs.load_from_stream(std::io::Cursor::new(data.deref_mut())),
@@ -101,6 +101,7 @@ pub fn load_weights(
 
 #[cfg(feature = "remote")]
 mod remote;
+#[cfg(feature = "libtorch")]
 use crate::pipelines::common::cast_var_store;
 #[cfg(feature = "remote")]
 pub use remote::RemoteResource;
