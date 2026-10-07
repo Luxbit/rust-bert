@@ -12,10 +12,11 @@ use rust_bert::roberta::{
     RobertaModelResources, RobertaVocabResources,
 };
 use rust_bert::Config;
+use rust_bert::Device;
 use rust_tokenizers::tokenizer::{RobertaTokenizer, Tokenizer, TruncationStrategy};
 use rust_tokenizers::vocab::Vocab;
 use std::collections::HashMap;
-use tch::{nn, no_grad, Device, Tensor};
+use tch::{nn, no_grad, Device as TchDevice, Tensor};
 
 #[test]
 fn roberta_masked_lm() -> anyhow::Result<()> {
@@ -34,7 +35,7 @@ fn roberta_masked_lm() -> anyhow::Result<()> {
 
     //    Set-up masked LM model
     let device = Device::Cpu;
-    let mut vs = nn::VarStore::new(device);
+    let mut vs = nn::VarStore::new(device.into());
     let tokenizer: RobertaTokenizer = RobertaTokenizer::from_file(
         vocab_path.to_str().unwrap(),
         merges_path.to_str().unwrap(),
@@ -72,7 +73,7 @@ fn roberta_masked_lm() -> anyhow::Result<()> {
         .iter()
         .map(|input| Tensor::from_slice(input))
         .collect::<Vec<_>>();
-    let input_tensor = Tensor::stack(tokenized_input.as_slice(), 0).to(device);
+    let input_tensor = Tensor::stack(tokenized_input.as_slice(), 0).to(device.into());
 
     //    Forward pass
     let model_output = no_grad(|| {
@@ -122,7 +123,7 @@ fn roberta_for_sequence_classification() -> anyhow::Result<()> {
 
     //    Set-up model
     let device = Device::Cpu;
-    let vs = nn::VarStore::new(device);
+    let vs = nn::VarStore::new(device.into());
     let tokenizer: RobertaTokenizer = RobertaTokenizer::from_file(
         vocab_path.to_str().unwrap(),
         merges_path.to_str().unwrap(),
@@ -159,7 +160,7 @@ fn roberta_for_sequence_classification() -> anyhow::Result<()> {
         })
         .map(|input| Tensor::from_slice(&(input)))
         .collect::<Vec<_>>();
-    let input_tensor = Tensor::stack(tokenized_input.as_slice(), 0).to(device);
+    let input_tensor = Tensor::stack(tokenized_input.as_slice(), 0).to(device.into());
 
     //    Forward pass
     let model_output =
@@ -192,7 +193,7 @@ fn roberta_for_multiple_choice() -> anyhow::Result<()> {
 
     //    Set-up model
     let device = Device::Cpu;
-    let vs = nn::VarStore::new(device);
+    let vs = nn::VarStore::new(device.into());
     let tokenizer: RobertaTokenizer = RobertaTokenizer::from_file(
         vocab_path.to_str().unwrap(),
         merges_path.to_str().unwrap(),
@@ -225,7 +226,7 @@ fn roberta_for_multiple_choice() -> anyhow::Result<()> {
         .map(|input| Tensor::from_slice(&(input)))
         .collect::<Vec<_>>();
     let input_tensor = Tensor::stack(tokenized_input.as_slice(), 0)
-        .to(device)
+        .to(device.into())
         .unsqueeze(0);
 
     //    Forward pass
@@ -258,7 +259,7 @@ fn roberta_for_token_classification() -> anyhow::Result<()> {
 
     //    Set-up model
     let device = Device::Cpu;
-    let vs = nn::VarStore::new(device);
+    let vs = nn::VarStore::new(device.into());
     let tokenizer: RobertaTokenizer = RobertaTokenizer::from_file(
         vocab_path.to_str().unwrap(),
         merges_path.to_str().unwrap(),
@@ -296,7 +297,7 @@ fn roberta_for_token_classification() -> anyhow::Result<()> {
         })
         .map(|input| Tensor::from_slice(&(input)))
         .collect::<Vec<_>>();
-    let input_tensor = Tensor::stack(tokenized_input.as_slice(), 0).to(device);
+    let input_tensor = Tensor::stack(tokenized_input.as_slice(), 0).to(device.into());
 
     //    Forward pass
     let model_output =

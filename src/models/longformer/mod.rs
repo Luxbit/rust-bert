@@ -74,15 +74,23 @@
 //! }
 //!  ```
 
+#[cfg(feature = "libtorch")]
 mod attention;
+pub mod config;
+#[cfg(feature = "libtorch")]
 mod embeddings;
+#[cfg(feature = "libtorch")]
 mod encoder;
+#[cfg(feature = "libtorch")]
 mod longformer_model;
 
+pub use config::{
+    LongformerConfig, LongformerConfigResources, LongformerMergesResources,
+    LongformerModelResources, LongformerVocabResources,
+};
+#[cfg(feature = "libtorch")]
 pub use longformer_model::{
-    LongformerConfig, LongformerConfigResources, LongformerForMaskedLM,
-    LongformerForMultipleChoice, LongformerForQuestionAnswering,
-    LongformerForSequenceClassification, LongformerForTokenClassification,
-    LongformerMergesResources, LongformerModel, LongformerModelResources,
-    LongformerTokenClassificationOutput, LongformerVocabResources,
+    LongformerForMaskedLM, LongformerForMultipleChoice, LongformerForQuestionAnswering,
+    LongformerForSequenceClassification, LongformerForTokenClassification, LongformerModel,
+    LongformerTokenClassificationOutput,
 };

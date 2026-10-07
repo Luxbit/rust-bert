@@ -15,10 +15,11 @@ use rust_bert::pipelines::question_answering::{
 };
 use rust_bert::resources::{RemoteResource, ResourceProvider};
 use rust_bert::Config;
+use rust_bert::Device;
 use rust_tokenizers::tokenizer::{BertTokenizer, MultiThreadedTokenizer, TruncationStrategy};
 use rust_tokenizers::vocab::Vocab;
 use std::collections::HashMap;
-use tch::{nn, no_grad, Device, Tensor};
+use tch::{nn, no_grad, Device as TchDevice, Tensor};
 
 #[test]
 fn bert_masked_lm() -> anyhow::Result<()> {
@@ -32,7 +33,7 @@ fn bert_masked_lm() -> anyhow::Result<()> {
 
     //    Set-up masked LM model
     let device = Device::Cpu;
-    let mut vs = nn::VarStore::new(device);
+    let mut vs = nn::VarStore::new(device.into());
     let tokenizer: BertTokenizer =
         BertTokenizer::from_file(vocab_path.to_str().unwrap(), true, true)?;
     let config = BertConfig::from_file(config_path);
@@ -66,7 +67,7 @@ fn bert_masked_lm() -> anyhow::Result<()> {
         .iter()
         .map(|input| Tensor::from_slice(input))
         .collect::<Vec<_>>();
-    let input_tensor = Tensor::stack(tokenized_input.as_slice(), 0).to(device);
+    let input_tensor = Tensor::stack(tokenized_input.as_slice(), 0).to(device.into());
 
     //    Forward pass
     let model_output = no_grad(|| {
@@ -154,7 +155,7 @@ fn bert_for_sequence_classification() -> anyhow::Result<()> {
 
     //    Set-up model
     let device = Device::Cpu;
-    let vs = nn::VarStore::new(device);
+    let vs = nn::VarStore::new(device.into());
     let tokenizer: BertTokenizer =
         BertTokenizer::from_file(vocab_path.to_str().unwrap(), true, true)?;
     let mut config = BertConfig::from_file(config_path);
@@ -187,7 +188,7 @@ fn bert_for_sequence_classification() -> anyhow::Result<()> {
         })
         .map(|input| Tensor::from_slice(&(input)))
         .collect::<Vec<_>>();
-    let input_tensor = Tensor::stack(tokenized_input.as_slice(), 0).to(device);
+    let input_tensor = Tensor::stack(tokenized_input.as_slice(), 0).to(device.into());
 
     //    Forward pass
     let model_output =
@@ -216,7 +217,7 @@ fn bert_for_multiple_choice() -> anyhow::Result<()> {
 
     //    Set-up model
     let device = Device::Cpu;
-    let vs = nn::VarStore::new(device);
+    let vs = nn::VarStore::new(device.into());
     let tokenizer: BertTokenizer =
         BertTokenizer::from_file(vocab_path.to_str().unwrap(), true, true)?;
     let mut config = BertConfig::from_file(config_path);
@@ -245,7 +246,7 @@ fn bert_for_multiple_choice() -> anyhow::Result<()> {
         .map(|input| Tensor::from_slice(&(input)))
         .collect::<Vec<_>>();
     let input_tensor = Tensor::stack(tokenized_input.as_slice(), 0)
-        .to(device)
+        .to(device.into())
         .unsqueeze(0);
 
     //    Forward pass
@@ -274,7 +275,7 @@ fn bert_for_token_classification() -> anyhow::Result<()> {
 
     //    Set-up model
     let device = Device::Cpu;
-    let vs = nn::VarStore::new(device);
+    let vs = nn::VarStore::new(device.into());
     let tokenizer: BertTokenizer =
         BertTokenizer::from_file(vocab_path.to_str().unwrap(), true, true)?;
     let mut config = BertConfig::from_file(config_path);
@@ -308,7 +309,7 @@ fn bert_for_token_classification() -> anyhow::Result<()> {
         })
         .map(|input| Tensor::from_slice(&(input)))
         .collect::<Vec<_>>();
-    let input_tensor = Tensor::stack(tokenized_input.as_slice(), 0).to(device);
+    let input_tensor = Tensor::stack(tokenized_input.as_slice(), 0).to(device.into());
 
     //    Forward pass
     let model_output =
@@ -337,7 +338,7 @@ fn bert_for_question_answering() -> anyhow::Result<()> {
 
     //    Set-up model
     let device = Device::Cpu;
-    let vs = nn::VarStore::new(device);
+    let vs = nn::VarStore::new(device.into());
     let tokenizer: BertTokenizer =
         BertTokenizer::from_file(vocab_path.to_str().unwrap(), true, true)?;
     let mut config = BertConfig::from_file(config_path);
@@ -365,7 +366,7 @@ fn bert_for_question_answering() -> anyhow::Result<()> {
         })
         .map(|input| Tensor::from_slice(&(input)))
         .collect::<Vec<_>>();
-    let input_tensor = Tensor::stack(tokenized_input.as_slice(), 0).to(device);
+    let input_tensor = Tensor::stack(tokenized_input.as_slice(), 0).to(device.into());
 
     //    Forward pass
     let model_output =

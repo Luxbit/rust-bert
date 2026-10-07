@@ -70,3 +70,11 @@ pub(crate) fn array_to_tensor_f32(array: &ArrayD<f32>) -> Result<Tensor, RustBer
     let data: Vec<f32> = array.iter().copied().collect();
     Ok(Tensor::from_slice(&data).view(shape.as_slice()))
 }
+
+/// Convert a dynamically dimensioned `ndarray` array of `i64` values to a
+/// CPU-resident `tch` tensor.
+pub(crate) fn array_to_tensor_i64(array: &ArrayD<i64>) -> Result<Tensor, RustBertError> {
+    let shape: Vec<i64> = array.shape().iter().map(|&dim| dim as i64).collect();
+    let data: Vec<i64> = array.iter().copied().collect();
+    Ok(Tensor::from_slice(&data).view(shape.as_slice()))
+}

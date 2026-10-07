@@ -1,7 +1,11 @@
 use crate::pipelines::common::{ConfigOption, TokenizerOption};
+#[cfg(feature = "libtorch")]
 use crate::pipelines::generation_utils::{Cache, GenerateConfig, LMModelOutput};
+#[cfg(feature = "libtorch")]
 use crate::pipelines::onnx::config::ONNXEnvironmentConfig;
+#[cfg(feature = "libtorch")]
 use crate::pipelines::onnx::decoder::ONNXDecoder;
+#[cfg(feature = "libtorch")]
 use crate::pipelines::onnx::encoder::ONNXEncoder;
 use crate::{Config, RustBertError};
 
@@ -16,7 +20,9 @@ use crate::pipelines::generation_utils::private_generation_utils::{
 #[cfg(feature = "libtorch")]
 use crate::pipelines::generation_utils::LanguageGenerator;
 
+#[cfg(feature = "libtorch")]
 use ndarray::ArrayD;
+#[cfg(feature = "libtorch")]
 use ort::session::SessionOutputs;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -54,6 +60,7 @@ impl Config for ONNXModelConfig {}
 /// keys and values are available from the previous token generated, avoiding unnecessary re-computation).
 ///
 /// The recommended instantiation is done via the `new` and `new_with_tokenizer` methods.
+#[cfg(feature = "libtorch")]
 pub struct ONNXCausalGenerator {
     decoder_without_past: Option<ONNXDecoder>,
     decoder_with_past: Option<ONNXDecoder>,
@@ -71,6 +78,7 @@ pub struct ONNXCausalGenerator {
     use_past: bool,
 }
 
+#[cfg(feature = "libtorch")]
 impl ONNXCausalGenerator {
     /// Create a new `ONNXCausalGenerator` from a `GenerateConfig`.
     ///
@@ -482,6 +490,7 @@ impl LanguageGenerator for ONNXCausalGenerator {}
 /// keys and values are available from the previous token generated, avoiding unnecessary re-computation).
 ///
 /// The recommended instantiation is done via the `new` and `new_with_tokenizer` methods.
+#[cfg(feature = "libtorch")]
 pub struct ONNXConditionalGenerator {
     encoder: ONNXEncoder,
     decoder_without_past: Option<ONNXDecoder>,
@@ -500,6 +509,7 @@ pub struct ONNXConditionalGenerator {
     use_past: bool,
 }
 
+#[cfg(feature = "libtorch")]
 impl ONNXConditionalGenerator {
     /// Create a new `ONNXConditionalGenerator` from a `GenerateConfig`.
     ///
@@ -952,12 +962,14 @@ impl PrivateLanguageGenerator for ONNXConditionalGenerator {
 #[cfg(feature = "libtorch")]
 impl LanguageGenerator for ONNXConditionalGenerator {}
 
+#[cfg(feature = "libtorch")]
 #[derive(Debug)]
 /// Container used to store key-value cached states for efficient decoding.
 pub struct ONNXLayerCache {
     pub values: HashMap<String, ArrayD<f32>>,
 }
 
+#[cfg(feature = "libtorch")]
 impl ONNXLayerCache {
     /// Helper function to create a cache layer from an ONNX model output.
     /// Assumes that the output names for cached keys and values contain `key` and `value` in their name, respectively.

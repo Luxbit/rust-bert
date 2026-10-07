@@ -54,23 +54,37 @@
 //! # }
 //! ```
 
+#[cfg(feature = "libtorch")]
 mod attention;
+pub mod config;
+#[cfg(feature = "libtorch")]
 mod deberta_model;
+#[cfg(feature = "libtorch")]
 mod embeddings;
+#[cfg(feature = "libtorch")]
 mod encoder;
 
+pub use config::{
+    DebertaConfig, DebertaConfigResources, DebertaMergesResources, DebertaModelResources,
+    DebertaVocabResources,
+};
+#[cfg(feature = "libtorch")]
 pub use deberta_model::{
-    DebertaConfig, DebertaConfigResources, DebertaForMaskedLM, DebertaForQuestionAnswering,
-    DebertaForSequenceClassification, DebertaForTokenClassification, DebertaMaskedLMOutput,
-    DebertaMergesResources, DebertaModel, DebertaModelResources, DebertaQuestionAnsweringOutput,
-    DebertaSequenceClassificationOutput, DebertaTokenClassificationOutput, DebertaVocabResources,
+    DebertaForMaskedLM, DebertaForQuestionAnswering, DebertaForSequenceClassification,
+    DebertaForTokenClassification, DebertaMaskedLMOutput, DebertaModel,
+    DebertaQuestionAnsweringOutput, DebertaSequenceClassificationOutput,
+    DebertaTokenClassificationOutput,
 };
 
+#[cfg(feature = "libtorch")]
 pub(crate) use deberta_model::{
-    deserialize_attention_type, x_softmax, BaseDebertaLayerNorm, ContextPooler,
-    DebertaLMPredictionHead, DebertaModelOutput, PositionAttentionType, PositionAttentionTypes,
+    x_softmax, BaseDebertaLayerNorm, ContextPooler, DebertaLMPredictionHead, DebertaModelOutput,
+    PositionAttentionType, PositionAttentionTypes,
 };
 
+#[cfg(feature = "libtorch")]
 pub(crate) use attention::{DebertaDisentangledSelfAttention, DisentangledSelfAttention};
+#[cfg(feature = "libtorch")]
 pub(crate) use embeddings::BaseDebertaEmbeddings;
+#[cfg(feature = "libtorch")]
 pub(crate) use encoder::{BaseDebertaLayer, DebertaEncoderOutput};

@@ -98,35 +98,43 @@
 //! .to_vec();
 //! ```
 
-use crate::albert::AlbertForSequenceClassification;
-use crate::bart::BartForSequenceClassification;
-use crate::bert::BertForSequenceClassification;
-use crate::deberta::DebertaForSequenceClassification;
-use crate::deberta_v2::DebertaV2ForSequenceClassification;
-use crate::distilbert::DistilBertModelClassifier;
-use crate::longformer::LongformerForSequenceClassification;
-use crate::mobilebert::MobileBertForSequenceClassification;
-use crate::pipelines::common::{
-    cast_var_store, ConfigOption, ModelResource, ModelType, TokenizerOption,
-};
+use crate::common::tensor_ops::{argmax_last_dim, softmax_last_dim};
+use crate::pipelines::common::{ConfigOption, ModelResource, ModelType, TokenizerOption};
 use crate::pipelines::sequence_classification::Label;
 use crate::resources::ResourceProvider;
-use crate::roberta::RobertaForSequenceClassification;
-use crate::xlnet::XLNetForSequenceClassification;
+use crate::Device;
 use crate::RustBertError;
+use ndarray::{Array1, Array2, ArrayD};
 use rust_tokenizers::tokenizer::TruncationStrategy;
 use rust_tokenizers::TokenizedInput;
 
+#[cfg(feature = "libtorch")]
+use crate::pipelines::common::cast_var_store;
 #[cfg(feature = "onnx")]
 use crate::pipelines::onnx::{config::ONNXEnvironmentConfig, ONNXEncoder};
-#[cfg(feature = "remote")]
+#[cfg(all(feature = "remote", feature = "libtorch"))]
 use crate::{
     bart::{BartConfigResources, BartMergesResources, BartModelResources, BartVocabResources},
     resources::RemoteResource,
 };
-use tch::kind::Kind::{Bool, Float};
+#[cfg(feature = "libtorch")]
 use tch::nn::VarStore;
-use tch::{no_grad, Device, Kind, Tensor};
+#[cfg(feature = "libtorch")]
+use tch::{no_grad, Kind, Tensor};
+
+#[cfg(feature = "libtorch")]
+mod torch_models {
+    pub use crate::albert::AlbertForSequenceClassification;
+    pub use crate::bart::BartForSequenceClassification;
+    pub use crate::bert::BertForSequenceClassification;
+    pub use crate::deberta::DebertaForSequenceClassification;
+    pub use crate::deberta_v2::DebertaV2ForSequenceClassification;
+    pub use crate::distilbert::DistilBertModelClassifier;
+    pub use crate::longformer::LongformerForSequenceClassification;
+    pub use crate::mobilebert::MobileBertForSequenceClassification;
+    pub use crate::roberta::RobertaForSequenceClassification;
+    pub use crate::xlnet::XLNetForSequenceClassification;
+}
 
 /// # Configuration for ZeroShotClassificationModel
 /// Contains information regarding the model to load and device to place the model on.
@@ -149,7 +157,8 @@ pub struct ZeroShotClassificationConfig {
     pub add_prefix_space: Option<bool>,
     /// Device to place the model on (default: CUDA/GPU when available)
     pub device: Device,
-    /// Model weights precision. If not provided, will default to full precision on CPU, or the loaded weights precision otherwise
+    /// Model weights precision (LibTorch backend only). If not provided, will default to full precision on CPU, or the loaded weights precision otherwise
+    #[cfg(feature = "libtorch")]
     pub kind: Option<Kind>,
 }
 
@@ -188,12 +197,13 @@ impl ZeroShotClassificationConfig {
             strip_accents: strip_accents.into(),
             add_prefix_space: add_prefix_space.into(),
             device: Device::cuda_if_available(),
+            #[cfg(feature = "libtorch")]
             kind: None,
         }
     }
 }
 
-#[cfg(feature = "remote")]
+#[cfg(all(feature = "remote", feature = "libtorch"))]
 impl Default for ZeroShotClassificationConfig {
     /// Provides a default zero-shot classification model (English)
     fn default() -> ZeroShotClassificationConfig {
@@ -215,6 +225,7 @@ impl Default for ZeroShotClassificationConfig {
             strip_accents: None,
             add_prefix_space: None,
             device: Device::cuda_if_available(),
+            #[cfg(feature = "libtorch")]
             kind: None,
         }
     }
@@ -227,27 +238,38 @@ impl Default for ZeroShotClassificationConfig {
 #[allow(clippy::large_enum_variant)]
 pub enum ZeroShotClassificationOption {
     /// Bart for Sequence Classification
-    Bart(BartForSequenceClassification),
+    #[cfg(feature = "libtorch")]
+    Bart(torch_models::BartForSequenceClassification),
     /// DeBERTa for Sequence Classification
-    Deberta(DebertaForSequenceClassification),
+    #[cfg(feature = "libtorch")]
+    Deberta(torch_models::DebertaForSequenceClassification),
     /// DeBERTaV2 for Sequence Classification
-    DebertaV2(DebertaV2ForSequenceClassification),
+    #[cfg(feature = "libtorch")]
+    DebertaV2(torch_models::DebertaV2ForSequenceClassification),
     /// Bert for Sequence Classification
-    Bert(BertForSequenceClassification),
+    #[cfg(feature = "libtorch")]
+    Bert(torch_models::BertForSequenceClassification),
     /// DistilBert for Sequence Classification
-    DistilBert(DistilBertModelClassifier),
+    #[cfg(feature = "libtorch")]
+    DistilBert(torch_models::DistilBertModelClassifier),
     /// MobileBert for Sequence Classification
-    MobileBert(MobileBertForSequenceClassification),
+    #[cfg(feature = "libtorch")]
+    MobileBert(torch_models::MobileBertForSequenceClassification),
     /// Roberta for Sequence Classification
-    Roberta(RobertaForSequenceClassification),
+    #[cfg(feature = "libtorch")]
+    Roberta(torch_models::RobertaForSequenceClassification),
     /// XLMRoberta for Sequence Classification
-    XLMRoberta(RobertaForSequenceClassification),
+    #[cfg(feature = "libtorch")]
+    XLMRoberta(torch_models::RobertaForSequenceClassification),
     /// Albert for Sequence Classification
-    Albert(AlbertForSequenceClassification),
+    #[cfg(feature = "libtorch")]
+    Albert(torch_models::AlbertForSequenceClassification),
     /// XLNet for Sequence Classification
-    XLNet(XLNetForSequenceClassification),
+    #[cfg(feature = "libtorch")]
+    XLNet(torch_models::XLNetForSequenceClassification),
     /// Longformer for Sequence Classification
-    Longformer(LongformerForSequenceClassification),
+    #[cfg(feature = "libtorch")]
+    Longformer(torch_models::LongformerForSequenceClassification),
     /// ONNX model for Sequence Classification
     #[cfg(feature = "onnx")]
     ONNX(ONNXEncoder),
@@ -262,14 +284,20 @@ impl ZeroShotClassificationOption {
     ///   `ModelResources` (Torch or ONNX) and `ModelType` (Architecture for Torch models) variants provided and
     pub fn new(config: &ZeroShotClassificationConfig) -> Result<Self, RustBertError> {
         match config.model_resource {
+            #[cfg(feature = "libtorch")]
             ModelResource::Torch(_) => Self::new_torch(config),
             #[cfg(feature = "onnx")]
             ModelResource::ONNX(_) => Self::new_onnx(config),
+            #[cfg(all(feature = "onnx", not(feature = "libtorch")))]
+            _ => Err(RustBertError::InvalidConfigurationError(
+                "Torch model resources require the `libtorch` feature".to_string(),
+            )),
         }
     }
 
+    #[cfg(feature = "libtorch")]
     fn new_torch(config: &ZeroShotClassificationConfig) -> Result<Self, RustBertError> {
-        let device = config.device;
+        let device: tch::Device = config.device.into();
         let weights_path = config.model_resource.get_torch_local_path()?;
         let mut var_store = VarStore::new(device);
         let model_config =
@@ -279,7 +307,7 @@ impl ZeroShotClassificationOption {
             ModelType::Bart => {
                 if let ConfigOption::Bart(config) = model_config {
                     Ok(Self::Bart(
-                        BartForSequenceClassification::new(var_store.root(), config)?,
+                        torch_models::BartForSequenceClassification::new(var_store.root(), config)?,
                     ))
                 } else {
                     Err(RustBertError::InvalidConfigurationError(
@@ -290,7 +318,7 @@ impl ZeroShotClassificationOption {
             ModelType::Deberta => {
                 if let ConfigOption::Deberta(config) = model_config {
                     Ok(Self::Deberta(
-                        DebertaForSequenceClassification::new(var_store.root(), config)?,
+                        torch_models::DebertaForSequenceClassification::new(var_store.root(), config)?,
                     ))
                 } else {
                     Err(RustBertError::InvalidConfigurationError(
@@ -301,7 +329,7 @@ impl ZeroShotClassificationOption {
             ModelType::DebertaV2 => {
                 if let ConfigOption::DebertaV2(config) = model_config {
                     Ok(Self::DebertaV2(
-                        DebertaV2ForSequenceClassification::new(var_store.root(), config)?,
+                        torch_models::DebertaV2ForSequenceClassification::new(var_store.root(), config)?,
                     ))
                 } else {
                     Err(RustBertError::InvalidConfigurationError(
@@ -312,7 +340,7 @@ impl ZeroShotClassificationOption {
             ModelType::Bert => {
                 if let ConfigOption::Bert(config) = model_config {
                     Ok(Self::Bert(
-                        BertForSequenceClassification::new(var_store.root(), config)?,
+                        torch_models::BertForSequenceClassification::new(var_store.root(), config)?,
                     ))
                 } else {
                     Err(RustBertError::InvalidConfigurationError(
@@ -323,7 +351,7 @@ impl ZeroShotClassificationOption {
             ModelType::DistilBert => {
                 if let ConfigOption::DistilBert(config) = model_config {
                     Ok(Self::DistilBert(
-                        DistilBertModelClassifier::new(var_store.root(), config)?,
+                        torch_models::DistilBertModelClassifier::new(var_store.root(), config)?,
                     ))
                 } else {
                     Err(RustBertError::InvalidConfigurationError(
@@ -334,7 +362,7 @@ impl ZeroShotClassificationOption {
             ModelType::MobileBert => {
                 if let ConfigOption::MobileBert(config) = model_config {
                     Ok(Self::MobileBert(
-                        MobileBertForSequenceClassification::new(var_store.root(), config)?,
+                        torch_models::MobileBertForSequenceClassification::new(var_store.root(), config)?,
                     ))
                 } else {
                     Err(RustBertError::InvalidConfigurationError(
@@ -345,7 +373,7 @@ impl ZeroShotClassificationOption {
             ModelType::Roberta => {
                 if let ConfigOption::Roberta(config) = model_config {
                     Ok(Self::Roberta(
-                        RobertaForSequenceClassification::new(var_store.root(), config)?,
+                        torch_models::RobertaForSequenceClassification::new(var_store.root(), config)?,
                     ))
                 } else {
                     Err(RustBertError::InvalidConfigurationError(
@@ -356,7 +384,7 @@ impl ZeroShotClassificationOption {
             ModelType::XLMRoberta => {
                 if let ConfigOption::Bert(config) = model_config {
                     Ok(Self::XLMRoberta(
-                        RobertaForSequenceClassification::new(var_store.root(), config)?,
+                        torch_models::RobertaForSequenceClassification::new(var_store.root(), config)?,
                     ))
                 } else {
                     Err(RustBertError::InvalidConfigurationError(
@@ -367,7 +395,7 @@ impl ZeroShotClassificationOption {
             ModelType::Albert => {
                 if let ConfigOption::Albert(config) = model_config {
                     Ok(Self::Albert(
-                        AlbertForSequenceClassification::new(var_store.root(), config)?,
+                        torch_models::AlbertForSequenceClassification::new(var_store.root(), config)?,
                     ))
                 } else {
                     Err(RustBertError::InvalidConfigurationError(
@@ -378,7 +406,7 @@ impl ZeroShotClassificationOption {
             ModelType::XLNet => {
                 if let ConfigOption::XLNet(config) = model_config {
                     Ok(Self::XLNet(
-                        XLNetForSequenceClassification::new(var_store.root(), config)?,
+                        torch_models::XLNetForSequenceClassification::new(var_store.root(), config)?,
                     ))
                 } else {
                     Err(RustBertError::InvalidConfigurationError(
@@ -389,7 +417,7 @@ impl ZeroShotClassificationOption {
             ModelType::Longformer => {
                 if let ConfigOption::Longformer(config) = model_config {
                     Ok(Self::Longformer(
-                        LongformerForSequenceClassification::new(var_store.root(), config)?,
+                        torch_models::LongformerForSequenceClassification::new(var_store.root(), config)?,
                     ))
                 } else {
                     Err(RustBertError::InvalidConfigurationError(
@@ -412,7 +440,7 @@ impl ZeroShotClassificationOption {
 
     #[cfg(feature = "onnx")]
     pub fn new_onnx(config: &ZeroShotClassificationConfig) -> Result<Self, RustBertError> {
-        let onnx_config = ONNXEnvironmentConfig::from_device(crate::Device::from(config.device));
+        let onnx_config = ONNXEnvironmentConfig::from_device(config.device);
         let encoder_file = config
             .model_resource
             .get_onnx_local_paths()?
@@ -428,16 +456,27 @@ impl ZeroShotClassificationOption {
     /// Returns the `ModelType` for this SequenceClassificationOption
     pub fn model_type(&self) -> ModelType {
         match *self {
+            #[cfg(feature = "libtorch")]
             Self::Bart(_) => ModelType::Bart,
+            #[cfg(feature = "libtorch")]
             Self::Deberta(_) => ModelType::Deberta,
+            #[cfg(feature = "libtorch")]
             Self::DebertaV2(_) => ModelType::DebertaV2,
+            #[cfg(feature = "libtorch")]
             Self::Bert(_) => ModelType::Bert,
+            #[cfg(feature = "libtorch")]
             Self::Roberta(_) => ModelType::Roberta,
+            #[cfg(feature = "libtorch")]
             Self::XLMRoberta(_) => ModelType::Roberta,
+            #[cfg(feature = "libtorch")]
             Self::DistilBert(_) => ModelType::DistilBert,
+            #[cfg(feature = "libtorch")]
             Self::MobileBert(_) => ModelType::MobileBert,
+            #[cfg(feature = "libtorch")]
             Self::Albert(_) => ModelType::Albert,
+            #[cfg(feature = "libtorch")]
             Self::XLNet(_) => ModelType::XLNet,
+            #[cfg(feature = "libtorch")]
             Self::Longformer(_) => ModelType::Longformer,
             #[cfg(feature = "onnx")]
             Self::ONNX(_) => ModelType::ONNX,
@@ -447,157 +486,190 @@ impl ZeroShotClassificationOption {
     /// Interface method to forward_t() of the particular models.
     pub fn forward_t(
         &self,
-        input_ids: Option<&Tensor>,
-        mask: Option<&Tensor>,
-        token_type_ids: Option<&Tensor>,
-        position_ids: Option<&Tensor>,
-        input_embeds: Option<&Tensor>,
+        input_ids: Option<&ArrayD<i64>>,
+        mask: Option<&ArrayD<i64>>,
+        token_type_ids: Option<&ArrayD<i64>>,
+        position_ids: Option<&ArrayD<i64>>,
+        input_embeds: Option<&ArrayD<f32>>,
         train: bool,
-    ) -> Tensor {
-        match *self {
-            Self::Bart(ref model) => {
-                model
-                    .forward_t(
-                        input_ids.expect("`input_ids` must be provided for BART models"),
-                        mask,
-                        None,
-                        None,
-                        None,
-                        train,
-                    )
-                    .decoder_output
-            }
-            Self::Bert(ref model) => {
-                model
-                    .forward_t(
-                        input_ids,
-                        mask,
-                        token_type_ids,
-                        position_ids,
-                        input_embeds,
-                        train,
-                    )
-                    .logits
-            }
-            Self::Deberta(ref model) => {
-                model
-                    .forward_t(
-                        input_ids,
-                        mask,
-                        token_type_ids,
-                        position_ids,
-                        input_embeds,
-                        train,
-                    )
-                    .expect("Error in DeBERTa forward_t")
-                    .logits
-            }
-            Self::DebertaV2(ref model) => {
-                model
-                    .forward_t(
-                        input_ids,
-                        mask,
-                        token_type_ids,
-                        position_ids,
-                        input_embeds,
-                        train,
-                    )
-                    .expect("Error in DeBERTaV2 forward_t")
-                    .logits
-            }
-            Self::DistilBert(ref model) => {
-                model
-                    .forward_t(input_ids, mask, input_embeds, train)
-                    .expect("Error in distilbert forward_t")
-                    .logits
-            }
-            Self::MobileBert(ref model) => {
-                model
-                    .forward_t(input_ids, None, None, input_embeds, mask, train)
-                    .expect("Error in mobilebert forward_t")
-                    .logits
-            }
-            Self::Roberta(ref model) | Self::XLMRoberta(ref model) => {
-                model
-                    .forward_t(
-                        input_ids,
-                        mask,
-                        token_type_ids,
-                        position_ids,
-                        input_embeds,
-                        train,
-                    )
-                    .logits
-            }
-            Self::Albert(ref model) => {
-                model
-                    .forward_t(
-                        input_ids,
-                        mask,
-                        token_type_ids,
-                        position_ids,
-                        input_embeds,
-                        train,
-                    )
-                    .logits
-            }
-            Self::XLNet(ref model) => {
-                model
-                    .forward_t(
-                        input_ids,
-                        mask,
-                        None,
-                        None,
-                        None,
-                        token_type_ids,
-                        input_embeds,
-                        train,
-                    )
-                    .logits
-            }
-            Self::Longformer(ref model) => {
-                model
-                    .forward_t(
-                        input_ids,
-                        mask,
-                        None,
-                        token_type_ids,
-                        position_ids,
-                        input_embeds,
-                        train,
-                    )
-                    .expect("Error in Longformer forward pass.")
-                    .logits
-            }
-            #[cfg(feature = "onnx")]
-            #[cfg(feature = "onnx")]
-            Self::ONNX(ref model) => {
-                use crate::common::tensor_conversion::{
-                    array_to_tensor_f32, tensor_to_array_f32, tensor_to_array_i64,
-                };
-                let ids = |t: &Tensor| {
-                    tensor_to_array_i64(t).expect("Error converting input tensor to ndarray")
-                };
-                let flt = |t: &Tensor| {
-                    tensor_to_array_f32(t).expect("Error converting input tensor to ndarray")
-                };
-                let input_ids = input_ids.map(|t| ids(t));
-                let mask = mask.map(|t| ids(t));
-                let token_type_ids = token_type_ids.map(|t| ids(t));
-                let position_ids = position_ids.map(|t| ids(t));
-                let input_embeds = input_embeds.map(|t| flt(t));
-                model
+    ) -> ArrayD<f32> {
+        #[cfg(feature = "libtorch")]
+        {
+            use crate::common::tensor_conversion::tensor_to_array_f32;
+            use crate::pipelines::common::{to_tensor_f32, to_tensor_i64};
+            let input_ids_array = input_ids;
+            let mask_array = mask;
+            let token_type_ids_array = token_type_ids;
+            let position_ids_array = position_ids;
+            let input_embeds_array = input_embeds;
+            let input_ids = to_tensor_i64(input_ids);
+            let mask = to_tensor_i64(mask);
+            let token_type_ids = to_tensor_i64(token_type_ids);
+            let position_ids = to_tensor_i64(position_ids);
+            let input_embeds = to_tensor_f32(input_embeds);
+            match *self {
+                Self::Bart(ref model) => tensor_to_array_f32(
+                    &model
+                        .forward_t(
+                            input_ids
+                                .as_ref()
+                                .expect("`input_ids` must be provided for BART models"),
+                            mask.as_ref(),
+                            None,
+                            None,
+                            None,
+                            train,
+                        )
+                        .decoder_output,
+                )
+                .expect("Error converting model output to ndarray"),
+                Self::Deberta(ref model) => tensor_to_array_f32(
+                    &model
+                        .forward_t(
+                            input_ids.as_ref(),
+                            mask.as_ref(),
+                            token_type_ids.as_ref(),
+                            position_ids.as_ref(),
+                            input_embeds.as_ref(),
+                            train,
+                        )
+                        .expect("Error in Deberta forward_t")
+                        .logits,
+                )
+                .expect("Error converting model output to ndarray"),
+                Self::DebertaV2(ref model) => tensor_to_array_f32(
+                    &model
+                        .forward_t(
+                            input_ids.as_ref(),
+                            mask.as_ref(),
+                            token_type_ids.as_ref(),
+                            position_ids.as_ref(),
+                            input_embeds.as_ref(),
+                            train,
+                        )
+                        .expect("Error in Deberta V2 forward_t")
+                        .logits,
+                )
+                .expect("Error converting model output to ndarray"),
+                Self::Bert(ref model) => tensor_to_array_f32(
+                    &model
+                        .forward_t(
+                            input_ids.as_ref(),
+                            mask.as_ref(),
+                            token_type_ids.as_ref(),
+                            position_ids.as_ref(),
+                            input_embeds.as_ref(),
+                            train,
+                        )
+                        .logits,
+                )
+                .expect("Error converting model output to ndarray"),
+                Self::DistilBert(ref model) => tensor_to_array_f32(
+                    &model
+                        .forward_t(
+                            input_ids.as_ref(),
+                            mask.as_ref(),
+                            input_embeds.as_ref(),
+                            train,
+                        )
+                        .expect("Error in distilbert forward_t")
+                        .logits,
+                )
+                .expect("Error converting model output to ndarray"),
+                Self::MobileBert(ref model) => tensor_to_array_f32(
+                    &model
+                        .forward_t(
+                            input_ids.as_ref(),
+                            None,
+                            None,
+                            input_embeds.as_ref(),
+                            mask.as_ref(),
+                            train,
+                        )
+                        .expect("Error in mobilebert forward_t")
+                        .logits,
+                )
+                .expect("Error converting model output to ndarray"),
+                Self::Roberta(ref model) | Self::XLMRoberta(ref model) => tensor_to_array_f32(
+                    &model
+                        .forward_t(
+                            input_ids.as_ref(),
+                            mask.as_ref(),
+                            token_type_ids.as_ref(),
+                            position_ids.as_ref(),
+                            input_embeds.as_ref(),
+                            train,
+                        )
+                        .logits,
+                )
+                .expect("Error converting model output to ndarray"),
+                Self::Albert(ref model) => tensor_to_array_f32(
+                    &model
+                        .forward_t(
+                            input_ids.as_ref(),
+                            mask.as_ref(),
+                            token_type_ids.as_ref(),
+                            position_ids.as_ref(),
+                            input_embeds.as_ref(),
+                            train,
+                        )
+                        .logits,
+                )
+                .expect("Error converting model output to ndarray"),
+                Self::XLNet(ref model) => tensor_to_array_f32(
+                    &model
+                        .forward_t(
+                            input_ids.as_ref(),
+                            mask.as_ref(),
+                            None,
+                            None,
+                            None,
+                            token_type_ids.as_ref(),
+                            input_embeds.as_ref(),
+                            train,
+                        )
+                        .logits,
+                )
+                .expect("Error converting model output to ndarray"),
+                Self::Longformer(ref model) => tensor_to_array_f32(
+                    &model
+                        .forward_t(
+                            input_ids.as_ref(),
+                            mask.as_ref(),
+                            None,
+                            token_type_ids.as_ref(),
+                            position_ids.as_ref(),
+                            input_embeds.as_ref(),
+                            train,
+                        )
+                        .expect("Error in Longformer forward_t")
+                        .logits,
+                )
+                .expect("Error converting model output to ndarray"),
+                #[cfg(feature = "onnx")]
+                Self::ONNX(ref model) => model
                     .forward(
-                        input_ids.as_ref(),
-                        mask.as_ref(),
-                        token_type_ids.as_ref(),
-                        position_ids.as_ref(),
-                        input_embeds.as_ref(),
+                        input_ids_array,
+                        mask_array,
+                        token_type_ids_array,
+                        position_ids_array,
+                        input_embeds_array,
                     )
                     .expect("Error in ONNX forward pass.")
                     .logits
-                    .map(|array| array_to_tensor_f32(&array).expect("Error converting ONNX output"))
-                    .unwrap()
+                    .unwrap(),
+            }
+        }
+        #[cfg(not(feature = "libtorch"))]
+        {
+            match *self {
+                #[cfg(feature = "onnx")]
+                Self::ONNX(ref model) => model
+                    .forward(input_ids, mask, token_type_ids, position_ids, input_embeds)
+                    .expect("Error in ONNX forward pass.")
+                    .logits
+                    .unwrap(),
+                _ => unreachable!("no inference backend available"),
             }
         }
     }
@@ -722,7 +794,7 @@ impl ZeroShotClassificationModel {
         labels: T,
         template: Option<ZeroShotTemplate>,
         max_len: usize,
-    ) -> Result<(Tensor, Tensor, Tensor), RustBertError>
+    ) -> Result<(Array2<i64>, Array2<i64>, Array2<i64>), RustBertError>
     where
         S: AsRef<[&'a str]>,
         T: AsRef<[&'a str]>,
@@ -766,33 +838,25 @@ impl ZeroShotClassificationModel {
             .tokenizer
             .get_pad_id()
             .expect("The Tokenizer used for sequence classification should contain a PAD id");
-        let input_ids = tokenized_input
-            .iter_mut()
-            .map(|input| {
-                input.token_ids.resize(max_len, pad_id);
-                Tensor::from_slice(&(input.token_ids))
-            })
-            .collect::<Vec<_>>();
-        let token_type_ids = tokenized_input
-            .iter_mut()
-            .map(|input| {
-                input
-                    .segment_ids
-                    .resize(max_len, *input.segment_ids.last().unwrap_or(&0));
-                Tensor::from_slice(&(input.segment_ids))
-            })
-            .collect::<Vec<_>>();
-
-        let input_ids = Tensor::stack(input_ids.as_slice(), 0).to(self.device);
-        let token_type_ids = Tensor::stack(token_type_ids.as_slice(), 0)
-            .to(self.device)
-            .to_kind(Kind::Int64);
-        let mask = input_ids
-            .ne(self
-                .tokenizer
-                .get_pad_id()
-                .expect("The Tokenizer used for zero shot classification should contain a PAD id"))
-            .to_kind(Bool);
+        let mut input_ids = Array2::<i64>::zeros((tokenized_input.len(), max_len));
+        let mut token_type_ids = Array2::<i64>::zeros((tokenized_input.len(), max_len));
+        for (row, input) in tokenized_input.iter_mut().enumerate() {
+            input.token_ids.resize(max_len, pad_id);
+            input
+                .segment_ids
+                .resize(max_len, *input.segment_ids.last().unwrap_or(&0));
+            input_ids
+                .row_mut(row)
+                .assign(&Array1::from(input.token_ids.clone()));
+            token_type_ids.row_mut(row).assign(&Array1::from_iter(
+                input.segment_ids.iter().map(|&segment| segment as i64),
+            ));
+        }
+        let pad_id = self
+            .tokenizer
+            .get_pad_id()
+            .expect("The Tokenizer used for zero shot classification should contain a PAD id");
+        let mask = input_ids.mapv(|value| (value != pad_id) as i64);
 
         Ok((input_ids, mask, token_type_ids))
     }
@@ -863,36 +927,50 @@ impl ZeroShotClassificationModel {
         T: AsRef<[&'a str]>,
     {
         let num_inputs = inputs.as_ref().len();
-        let (input_tensor, mask, token_type_ids) =
+        let num_labels = labels.as_ref().len();
+        let (input_ids, mask, token_type_ids) =
             self.prepare_for_model(inputs.as_ref(), labels.as_ref(), template, max_length)?;
 
-        let output = no_grad(|| {
-            let output = self.zero_shot_classifier.forward_t(
-                Some(&input_tensor),
-                Some(&mask),
-                Some(&token_type_ids),
-                None,
-                None,
-                false,
-            );
-            output.view((num_inputs as i64, labels.as_ref().len() as i64, -1i64))
-        });
+        let output = self.zero_shot_classifier.forward_t(
+            Some(&input_ids.into_dyn()),
+            Some(&mask.into_dyn()),
+            Some(&token_type_ids.into_dyn()),
+            None,
+            None,
+            false,
+        );
+        let output = output
+            .into_shape((num_inputs, num_labels, 3))
+            .expect("Model output could not be shaped to (inputs, labels, 3)");
 
-        let scores = output.softmax(1, Float).select(-1, -1);
-        let label_indices = scores.as_ref().argmax(-1, true).squeeze_dim(1);
-        let scores = scores
-            .gather(1, &label_indices.unsqueeze(-1), false)
-            .squeeze_dim(1);
-        let label_indices = label_indices.iter::<i64>()?.collect::<Vec<i64>>();
-        let scores = scores.iter::<f64>()?.collect::<Vec<f64>>();
+        // Entailment probability: softmax over the [contradiction, entailment] logits,
+        // renormalized across labels (matching the original single-label pipeline).
+        let mut entailment = Array2::<f32>::zeros((num_inputs, num_labels));
+        for sentence_idx in 0..num_inputs {
+            let label_scores: Vec<f32> = (0..num_labels)
+                .map(|label_idx| {
+                    let pair = [
+                        output[[sentence_idx, label_idx, 0]],
+                        output[[sentence_idx, label_idx, 2]],
+                    ];
+                    softmax_last_dim(&Array1::from(pair.to_vec()).into_dyn())[1]
+                })
+                .collect();
+            let normalized = softmax_last_dim(&Array1::from(label_scores).into_dyn());
+            entailment
+                .row_mut(sentence_idx)
+                .assign(&Array1::from(normalized.into_raw_vec()));
+        }
+
+        let label_indices = argmax_last_dim(&entailment.clone().into_dyn());
 
         let mut output_labels: Vec<Label> = vec![];
-        for sentence_idx in 0..label_indices.len() {
-            let label_string = labels.as_ref()[label_indices[sentence_idx] as usize].to_string();
+        for (sentence_idx, &label_index) in label_indices.iter().enumerate() {
+            let label_string = labels.as_ref()[label_index as usize].to_string();
             let label = Label {
                 text: label_string,
-                score: scores[sentence_idx],
-                id: label_indices[sentence_idx],
+                score: entailment[[sentence_idx, label_index as usize]] as f64,
+                id: label_index,
                 sentence: sentence_idx,
             };
             output_labels.push(label)
@@ -1005,35 +1083,44 @@ impl ZeroShotClassificationModel {
         T: AsRef<[&'a str]>,
     {
         let num_inputs = inputs.as_ref().len();
-        let (input_tensor, mask, token_type_ids) =
+        let num_labels = labels.as_ref().len();
+        let (input_ids, mask, token_type_ids) =
             self.prepare_for_model(inputs.as_ref(), labels.as_ref(), template, max_length)?;
 
-        let output = no_grad(|| {
-            let output = self.zero_shot_classifier.forward_t(
-                Some(&input_tensor),
-                Some(&mask),
-                Some(&token_type_ids),
-                None,
-                None,
-                false,
-            );
-            output.view((num_inputs as i64, labels.as_ref().len() as i64, -1i64))
-        });
-        let scores = output.slice(-1, 0, 3, 2).softmax(-1, Float).select(-1, -1);
+        let output = self.zero_shot_classifier.forward_t(
+            Some(&input_ids.into_dyn()),
+            Some(&mask.into_dyn()),
+            Some(&token_type_ids.into_dyn()),
+            None,
+            None,
+            false,
+        );
+        let output = output
+            .into_shape((num_inputs, num_labels, 3))
+            .expect("Model output could not be shaped to (inputs, labels, 3)");
+
+        // Entailment probability from the [contradiction, entailment] logit pair.
+        let mut entailment = Array2::<f32>::zeros((num_inputs, num_labels));
+        for sentence_idx in 0..num_inputs {
+            for label_idx in 0..num_labels {
+                let pair = [
+                    output[[sentence_idx, label_idx, 0]],
+                    output[[sentence_idx, label_idx, 2]],
+                ];
+                entailment[[sentence_idx, label_idx]] =
+                    softmax_last_dim(&Array1::from(pair.to_vec()).into_dyn())[1];
+            }
+        }
 
         let mut output_labels = vec![];
         for sentence_idx in 0..num_inputs {
             let mut sentence_labels = vec![];
 
-            for (label_index, score) in scores
-                .select(0, sentence_idx as i64)
-                .iter::<f64>()?
-                .enumerate()
-            {
+            for (label_index, &score) in entailment.row(sentence_idx).iter().enumerate() {
                 let label_string = labels.as_ref()[label_index].to_string();
                 let label = Label {
                     text: label_string,
-                    score,
+                    score: score as f64,
                     id: label_index as i64,
                     sentence: sentence_idx,
                 };

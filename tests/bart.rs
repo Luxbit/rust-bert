@@ -9,9 +9,10 @@ use rust_bert::pipelines::zero_shot_classification::{
     ZeroShotClassificationConfig, ZeroShotClassificationModel,
 };
 use rust_bert::resources::{RemoteResource, ResourceProvider};
+use rust_bert::Device;
 use rust_bert::{Config, RustBertError};
 use rust_tokenizers::tokenizer::{RobertaTokenizer, Tokenizer, TruncationStrategy};
-use tch::{nn, Device, Tensor};
+use tch::{nn, Device as TchDevice, Tensor};
 
 #[test]
 fn bart_lm_model() -> anyhow::Result<()> {
@@ -35,7 +36,7 @@ fn bart_lm_model() -> anyhow::Result<()> {
 
     //    Set-up masked LM model
     let device = Device::Cpu;
-    let mut vs = nn::VarStore::new(device);
+    let mut vs = nn::VarStore::new(device.into());
     let tokenizer: RobertaTokenizer = RobertaTokenizer::from_file(
         vocab_path.to_str().unwrap(),
         merges_path.to_str().unwrap(),
@@ -45,7 +46,7 @@ fn bart_lm_model() -> anyhow::Result<()> {
     let config = BartConfig::from_file(config_path);
     let bart_model = BartModel::new(&vs.root() / "model", &config);
     vs.load(weights_path)?;
-    cast_var_store(&mut vs, None, device);
+    cast_var_store(&mut vs, None, device.into());
 
     //    Define input
     let input = ["One two three four"];
@@ -64,7 +65,7 @@ fn bart_lm_model() -> anyhow::Result<()> {
         })
         .map(|input| Tensor::from_slice(&(input)))
         .collect::<Vec<_>>();
-    let input_tensor = Tensor::stack(tokenized_input.as_slice(), 0).to(device);
+    let input_tensor = Tensor::stack(tokenized_input.as_slice(), 0).to(device.into());
 
     //    Forward pass
     let model_output =
@@ -101,7 +102,7 @@ fn bart_summarization_greedy() -> anyhow::Result<()> {
         length_penalty: 1.0,
         min_length: 56,
         max_length: Some(142),
-        device: Device::Cpu,
+        device: TchDevice::Cpu,
         ..Default::default()
     };
     let model = SummarizationModel::new(summarization_config)?;
@@ -162,7 +163,7 @@ fn bart_summarization_beam_search() -> anyhow::Result<()> {
         min_length: 56,
         max_length: Some(142),
         length_penalty: 1.0,
-        device: Device::Cpu,
+        device: TchDevice::Cpu,
         ..Default::default()
     };
     let model = SummarizationModel::new(summarization_config)?;

@@ -26,6 +26,12 @@ pub fn log_softmax_last_dim(array: &ArrayD<f32>) -> ArrayD<f32> {
     softmax.mapv(f32::ln)
 }
 
+/// Compute the element-wise sigmoid function.
+#[allow(dead_code)] // used by the classification pipelines' multi-label scoring
+pub fn sigmoid(array: &ArrayD<f32>) -> ArrayD<f32> {
+    array.mapv(|value| 1.0 / (1.0 + (-value).exp()))
+}
+
 /// Select the top-k elements along the last dimension.
 ///
 /// Returns the k largest values (sorted in descending order) and their indices,

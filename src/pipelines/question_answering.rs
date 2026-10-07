@@ -43,40 +43,50 @@
 //! # ;
 //! ```
 
-use crate::albert::AlbertForQuestionAnswering;
-use crate::bert::BertForQuestionAnswering;
 use crate::common::error::RustBertError;
-use crate::deberta::DebertaForQuestionAnswering;
-use crate::distilbert::DistilBertForQuestionAnswering;
-use crate::fnet::FNetForQuestionAnswering;
-use crate::longformer::LongformerForQuestionAnswering;
-use crate::mobilebert::MobileBertForQuestionAnswering;
 use crate::pipelines::common::{
-    cast_var_store, get_device, ConfigOption, ModelResource, ModelType, TokenizerOption,
+    get_device, ConfigOption, ModelResource, ModelType, TokenizerOption,
 };
-use crate::reformer::ReformerForQuestionAnswering;
 use crate::resources::ResourceProvider;
-use crate::roberta::RobertaForQuestionAnswering;
-use crate::xlnet::XLNetForQuestionAnswering;
 use rust_tokenizers::{Offset, TokenIdsWithOffsets, TokenizedInput};
 use serde::{Deserialize, Serialize};
 use std::cmp::min;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use tch::nn::VarStore;
-use tch::{no_grad, Device, Kind, Tensor};
 
-use crate::deberta_v2::DebertaV2ForQuestionAnswering;
+#[cfg(feature = "libtorch")]
+use crate::pipelines::common::cast_var_store;
 #[cfg(feature = "onnx")]
 use crate::pipelines::onnx::{config::ONNXEnvironmentConfig, ONNXEncoder};
+#[cfg(feature = "libtorch")]
+use tch::nn::VarStore;
+#[cfg(feature = "libtorch")]
+use tch::{no_grad, Kind, Tensor};
 
-use crate::common::kind::get_min;
-#[cfg(feature = "remote")]
+#[cfg(all(feature = "remote", feature = "libtorch"))]
 use crate::{
     distilbert::{DistilBertConfigResources, DistilBertModelResources, DistilBertVocabResources},
     resources::RemoteResource,
 };
+
+#[cfg(feature = "libtorch")]
+mod torch_models {
+    pub use crate::albert::AlbertForQuestionAnswering;
+    pub use crate::bert::BertForQuestionAnswering;
+    pub use crate::deberta::DebertaForQuestionAnswering;
+    pub use crate::deberta_v2::DebertaV2ForQuestionAnswering;
+    pub use crate::distilbert::DistilBertForQuestionAnswering;
+    pub use crate::fnet::FNetForQuestionAnswering;
+    pub use crate::longformer::LongformerForQuestionAnswering;
+    pub use crate::mobilebert::MobileBertForQuestionAnswering;
+    pub use crate::reformer::ReformerForQuestionAnswering;
+    pub use crate::roberta::RobertaForQuestionAnswering;
+    pub use crate::xlnet::XLNetForQuestionAnswering;
+}
+
+use crate::Device;
+use ndarray::{Array1, Array2, ArrayD};
 
 #[derive(Serialize, Deserialize)]
 /// # Input for Question Answering
@@ -158,7 +168,8 @@ pub struct QuestionAnsweringConfig {
     pub max_query_length: usize,
     /// Maximum length for the answer
     pub max_answer_length: usize,
-    /// Model weights precision. If not provided, will default to full precision on CPU, or the loaded weights precision otherwise
+    /// Model weights precision (LibTorch backend only). If not provided, will default to full precision on CPU, or the loaded weights precision otherwise
+    #[cfg(feature = "libtorch")]
     pub kind: Option<Kind>,
 }
 
@@ -201,6 +212,7 @@ impl QuestionAnsweringConfig {
             doc_stride: 128,
             max_query_length: 64,
             max_answer_length: 15,
+            #[cfg(feature = "libtorch")]
             kind: None,
         }
     }
@@ -251,12 +263,13 @@ impl QuestionAnsweringConfig {
             doc_stride: doc_stride.into().unwrap_or(128),
             max_query_length: max_query_length.into().unwrap_or(64),
             max_answer_length: max_answer_length.into().unwrap_or(15),
+            #[cfg(feature = "libtorch")]
             kind: None,
         }
     }
 }
 
-#[cfg(feature = "remote")]
+#[cfg(all(feature = "remote", feature = "libtorch"))]
 impl Default for QuestionAnsweringConfig {
     fn default() -> QuestionAnsweringConfig {
         QuestionAnsweringConfig {
@@ -271,6 +284,7 @@ impl Default for QuestionAnsweringConfig {
             )),
             merges_resource: None,
             device: Device::cuda_if_available(),
+            #[cfg(feature = "libtorch")]
             kind: None,
             model_type: ModelType::DistilBert,
             lower_case: false,
@@ -288,29 +302,41 @@ impl Default for QuestionAnsweringConfig {
 /// # Abstraction that holds one particular question answering model, for any of the supported models
 pub enum QuestionAnsweringOption {
     /// Bert for Question Answering
-    Bert(BertForQuestionAnswering),
+    #[cfg(feature = "libtorch")]
+    Bert(torch_models::BertForQuestionAnswering),
     /// DeBERTa for Question Answering
-    Deberta(DebertaForQuestionAnswering),
+    #[cfg(feature = "libtorch")]
+    Deberta(torch_models::DebertaForQuestionAnswering),
     /// DeBERTa V2 for Question Answering
-    DebertaV2(DebertaV2ForQuestionAnswering),
+    #[cfg(feature = "libtorch")]
+    DebertaV2(torch_models::DebertaV2ForQuestionAnswering),
     /// DistilBert for Question Answering
-    DistilBert(DistilBertForQuestionAnswering),
+    #[cfg(feature = "libtorch")]
+    DistilBert(torch_models::DistilBertForQuestionAnswering),
     /// MobileBert for Question Answering
-    MobileBert(MobileBertForQuestionAnswering),
+    #[cfg(feature = "libtorch")]
+    MobileBert(torch_models::MobileBertForQuestionAnswering),
     /// Roberta for Question Answering
-    Roberta(RobertaForQuestionAnswering),
+    #[cfg(feature = "libtorch")]
+    Roberta(torch_models::RobertaForQuestionAnswering),
     /// XLMRoberta for Question Answering
-    XLMRoberta(RobertaForQuestionAnswering),
+    #[cfg(feature = "libtorch")]
+    XLMRoberta(torch_models::RobertaForQuestionAnswering),
     /// Albert for Question Answering
-    Albert(AlbertForQuestionAnswering),
+    #[cfg(feature = "libtorch")]
+    Albert(torch_models::AlbertForQuestionAnswering),
     /// XLNet for Question Answering
-    XLNet(XLNetForQuestionAnswering),
+    #[cfg(feature = "libtorch")]
+    XLNet(torch_models::XLNetForQuestionAnswering),
     /// Reformer for Question Answering
-    Reformer(ReformerForQuestionAnswering),
+    #[cfg(feature = "libtorch")]
+    Reformer(torch_models::ReformerForQuestionAnswering),
     /// Longformer for Question Answering
-    Longformer(LongformerForQuestionAnswering),
+    #[cfg(feature = "libtorch")]
+    Longformer(torch_models::LongformerForQuestionAnswering),
     /// FNet for Question Answering
-    FNet(FNetForQuestionAnswering),
+    #[cfg(feature = "libtorch")]
+    FNet(torch_models::FNetForQuestionAnswering),
     /// ONNX model for Question Answering
     #[cfg(feature = "onnx")]
     ONNX(ONNXEncoder),
@@ -325,14 +351,20 @@ impl QuestionAnsweringOption {
     ///   `ModelResources` (Torch or ONNX) and `ModelType` (Architecture for Torch models) variants provided and
     pub fn new(config: &QuestionAnsweringConfig) -> Result<Self, RustBertError> {
         match config.model_resource {
+            #[cfg(feature = "libtorch")]
             ModelResource::Torch(_) => Self::new_torch(config),
             #[cfg(feature = "onnx")]
             ModelResource::ONNX(_) => Self::new_onnx(config),
+            #[cfg(all(feature = "onnx", not(feature = "libtorch")))]
+            _ => Err(RustBertError::InvalidConfigurationError(
+                "Torch model resources require the `libtorch` feature".to_string(),
+            )),
         }
     }
 
+    #[cfg(feature = "libtorch")]
     fn new_torch(config: &QuestionAnsweringConfig) -> Result<Self, RustBertError> {
-        let device = config.device;
+        let device: tch::Device = config.device.into();
         let weights_path = config.model_resource.get_torch_local_path()?;
         let mut var_store = VarStore::new(device);
         let model_config = &mut ConfigOption::from_file(
@@ -344,7 +376,7 @@ impl QuestionAnsweringOption {
             ModelType::Bert => {
                 if let ConfigOption::Bert(config) = model_config {
                     Ok(QuestionAnsweringOption::Bert(
-                        BertForQuestionAnswering::new(var_store.root(), config),
+                        torch_models::BertForQuestionAnswering::new(var_store.root(), config),
                     ))
                 } else {
                     Err(RustBertError::InvalidConfigurationError(
@@ -355,7 +387,7 @@ impl QuestionAnsweringOption {
             ModelType::Deberta => {
                 if let ConfigOption::Deberta(config) = model_config {
                     Ok(QuestionAnsweringOption::Deberta(
-                        DebertaForQuestionAnswering::new(var_store.root(), config),
+                        torch_models::DebertaForQuestionAnswering::new(var_store.root(), config),
                     ))
                 } else {
                     Err(RustBertError::InvalidConfigurationError(
@@ -366,7 +398,7 @@ impl QuestionAnsweringOption {
             ModelType::DebertaV2 => {
                 if let ConfigOption::DebertaV2(config) = model_config {
                     Ok(QuestionAnsweringOption::DebertaV2(
-                        DebertaV2ForQuestionAnswering::new(var_store.root(), config),
+                        torch_models::DebertaV2ForQuestionAnswering::new(var_store.root(), config),
                     ))
                 } else {
                     Err(RustBertError::InvalidConfigurationError(
@@ -378,7 +410,7 @@ impl QuestionAnsweringOption {
                 if let ConfigOption::DistilBert(ref mut config) = model_config {
                     config.sinusoidal_pos_embds = false;
                     Ok(QuestionAnsweringOption::DistilBert(
-                        DistilBertForQuestionAnswering::new(var_store.root(), config),
+                        torch_models::DistilBertForQuestionAnswering::new(var_store.root(), config),
                     ))
                 } else {
                     Err(RustBertError::InvalidConfigurationError(
@@ -389,7 +421,7 @@ impl QuestionAnsweringOption {
             ModelType::MobileBert => {
                 if let ConfigOption::MobileBert(config) = model_config {
                     Ok(QuestionAnsweringOption::MobileBert(
-                        MobileBertForQuestionAnswering::new(var_store.root(), config),
+                        torch_models::MobileBertForQuestionAnswering::new(var_store.root(), config),
                     ))
                 } else {
                     Err(RustBertError::InvalidConfigurationError(
@@ -400,7 +432,7 @@ impl QuestionAnsweringOption {
             ModelType::Roberta => {
                 if let ConfigOption::Roberta(config) = model_config {
                     Ok(QuestionAnsweringOption::Roberta(
-                        RobertaForQuestionAnswering::new(var_store.root(), config),
+                        torch_models::RobertaForQuestionAnswering::new(var_store.root(), config),
                     ))
                 } else {
                     Err(RustBertError::InvalidConfigurationError(
@@ -411,7 +443,7 @@ impl QuestionAnsweringOption {
             ModelType::XLMRoberta => {
                 if let ConfigOption::Bert(config) = model_config {
                     Ok(QuestionAnsweringOption::XLMRoberta(
-                        RobertaForQuestionAnswering::new(var_store.root(), config),
+                        torch_models::RobertaForQuestionAnswering::new(var_store.root(), config),
                     ))
                 } else {
                     Err(RustBertError::InvalidConfigurationError(
@@ -422,7 +454,7 @@ impl QuestionAnsweringOption {
             ModelType::Albert => {
                 if let ConfigOption::Albert(config) = model_config {
                     Ok(QuestionAnsweringOption::Albert(
-                        AlbertForQuestionAnswering::new(var_store.root(), config),
+                        torch_models::AlbertForQuestionAnswering::new(var_store.root(), config),
                     ))
                 } else {
                     Err(RustBertError::InvalidConfigurationError(
@@ -433,7 +465,7 @@ impl QuestionAnsweringOption {
             ModelType::XLNet => {
                 if let ConfigOption::XLNet(config) = model_config {
                     Ok(QuestionAnsweringOption::XLNet(
-                        XLNetForQuestionAnswering::new(var_store.root(), config)?,
+                        torch_models::XLNetForQuestionAnswering::new(var_store.root(), config)?,
                     ))
                 } else {
                     Err(RustBertError::InvalidConfigurationError(
@@ -444,7 +476,7 @@ impl QuestionAnsweringOption {
             ModelType::Reformer => {
                 if let ConfigOption::Reformer(config) = model_config {
                     Ok(QuestionAnsweringOption::Reformer(
-                        ReformerForQuestionAnswering::new(var_store.root(), config)?,
+                        torch_models::ReformerForQuestionAnswering::new(var_store.root(), config)?,
                     ))
                 } else {
                     Err(RustBertError::InvalidConfigurationError(
@@ -455,7 +487,7 @@ impl QuestionAnsweringOption {
             ModelType::Longformer => {
                 if let ConfigOption::Longformer(config) = model_config {
                     Ok(QuestionAnsweringOption::Longformer(
-                        LongformerForQuestionAnswering::new(var_store.root(), config),
+                        torch_models::LongformerForQuestionAnswering::new(var_store.root(), config),
                     ))
                 } else {
                     Err(RustBertError::InvalidConfigurationError(
@@ -466,7 +498,7 @@ impl QuestionAnsweringOption {
             ModelType::FNet => {
                 if let ConfigOption::FNet(config) = model_config {
                     Ok(QuestionAnsweringOption::FNet(
-                        FNetForQuestionAnswering::new(var_store.root(), config),
+                        torch_models::FNetForQuestionAnswering::new(var_store.root(), config),
                     ))
                 } else {
                     Err(RustBertError::InvalidConfigurationError(
@@ -485,7 +517,7 @@ impl QuestionAnsweringOption {
 
     #[cfg(feature = "onnx")]
     pub fn new_onnx(config: &QuestionAnsweringConfig) -> Result<Self, RustBertError> {
-        let onnx_config = ONNXEnvironmentConfig::from_device(crate::Device::from(config.device));
+        let onnx_config = ONNXEnvironmentConfig::from_device(config.device);
         let encoder_file = config
             .model_resource
             .get_onnx_local_paths()?
@@ -500,17 +532,29 @@ impl QuestionAnsweringOption {
     /// Returns the `ModelType` for this SequenceClassificationOption
     pub fn model_type(&self) -> ModelType {
         match *self {
+            #[cfg(feature = "libtorch")]
             Self::Bert(_) => ModelType::Bert,
+            #[cfg(feature = "libtorch")]
             Self::Deberta(_) => ModelType::Deberta,
+            #[cfg(feature = "libtorch")]
             Self::DebertaV2(_) => ModelType::DebertaV2,
+            #[cfg(feature = "libtorch")]
             Self::Roberta(_) => ModelType::Roberta,
+            #[cfg(feature = "libtorch")]
             Self::XLMRoberta(_) => ModelType::XLMRoberta,
+            #[cfg(feature = "libtorch")]
             Self::DistilBert(_) => ModelType::DistilBert,
+            #[cfg(feature = "libtorch")]
             Self::MobileBert(_) => ModelType::MobileBert,
+            #[cfg(feature = "libtorch")]
             Self::Albert(_) => ModelType::Albert,
+            #[cfg(feature = "libtorch")]
             Self::XLNet(_) => ModelType::XLNet,
+            #[cfg(feature = "libtorch")]
             Self::Reformer(_) => ModelType::Reformer,
+            #[cfg(feature = "libtorch")]
             Self::Longformer(_) => ModelType::Longformer,
+            #[cfg(feature = "libtorch")]
             Self::FNet(_) => ModelType::FNet,
             #[cfg(feature = "onnx")]
             Self::ONNX(_) => ModelType::ONNX,
@@ -520,105 +564,229 @@ impl QuestionAnsweringOption {
     /// Interface method to forward_t() of the particular models.
     pub fn forward_t(
         &self,
-        input_ids: Option<&Tensor>,
-        mask: Option<&Tensor>,
-        input_embeds: Option<&Tensor>,
-        _token_type_ids: Option<&Tensor>,
+        input_ids: Option<&ArrayD<i64>>,
+        mask: Option<&ArrayD<i64>>,
+        input_embeds: Option<&ArrayD<f32>>,
+        _token_type_ids: Option<&ArrayD<i64>>,
         train: bool,
-    ) -> (Tensor, Tensor) {
-        match *self {
-            Self::Bert(ref model) => {
-                let outputs = model.forward_t(input_ids, mask, None, None, input_embeds, train);
-                (outputs.start_logits, outputs.end_logits)
-            }
-            Self::Deberta(ref model) => {
-                let outputs = model
-                    .forward_t(input_ids, mask, None, None, input_embeds, train)
-                    .expect("Error in Deberta forward_t");
-                (outputs.start_logits, outputs.end_logits)
-            }
-            Self::DebertaV2(ref model) => {
-                let outputs = model
-                    .forward_t(input_ids, mask, None, None, input_embeds, train)
-                    .expect("Error in Deberta V2 forward_t");
-                (outputs.start_logits, outputs.end_logits)
-            }
-            Self::DistilBert(ref model) => {
-                let outputs = model
-                    .forward_t(input_ids, mask, input_embeds, train)
-                    .expect("Error in distilbert forward_t");
-                (outputs.start_logits, outputs.end_logits)
-            }
-            Self::MobileBert(ref model) => {
-                let outputs = model
-                    .forward_t(input_ids, None, None, input_embeds, mask, train)
-                    .expect("Error in mobilebert forward_t");
-                (outputs.start_logits, outputs.end_logits)
-            }
-            Self::Roberta(ref model) | Self::XLMRoberta(ref model) => {
-                let outputs = model.forward_t(input_ids, mask, None, None, input_embeds, train);
-                (outputs.start_logits, outputs.end_logits)
-            }
-            Self::Albert(ref model) => {
-                let outputs = model.forward_t(input_ids, mask, None, None, input_embeds, train);
-                (outputs.start_logits, outputs.end_logits)
-            }
-            Self::XLNet(ref model) => {
-                let outputs =
-                    model.forward_t(input_ids, mask, None, None, None, None, input_embeds, train);
-                (outputs.start_logits, outputs.end_logits)
-            }
-            Self::Reformer(ref model) => {
-                let outputs = model
-                    .forward_t(input_ids, None, None, mask, None, train)
-                    .expect("Error in reformer forward pass");
-                (outputs.start_logits, outputs.end_logits)
-            }
-            Self::Longformer(ref model) => {
-                let outputs = model
-                    .forward_t(input_ids, mask, None, None, None, None, train)
-                    .expect("Error in reformer forward pass");
-                (outputs.start_logits, outputs.end_logits)
-            }
-            Self::FNet(ref model) => {
-                let outputs = model
-                    .forward_t(input_ids, None, None, None, train)
-                    .expect("Error in fnet forward pass");
-                (outputs.start_logits, outputs.end_logits)
-            }
-            #[cfg(feature = "onnx")]
-            Self::ONNX(ref model) => {
-                use crate::common::tensor_conversion::{
-                    array_to_tensor_f32, tensor_to_array_f32, tensor_to_array_i64,
-                };
-                let ids = |t: &Tensor| {
-                    tensor_to_array_i64(t).expect("Error converting input tensor to ndarray")
-                };
-                let flt = |t: &Tensor| {
-                    tensor_to_array_f32(t).expect("Error converting input tensor to ndarray")
-                };
-                let input_ids = input_ids.map(|t| ids(t));
-                let mask = mask.map(|t| ids(t));
-                let token_type_ids = _token_type_ids.map(|t| ids(t));
-                let input_embeds = input_embeds.map(|t| flt(t));
-                let outputs = model
-                    .forward(
+    ) -> (ArrayD<f32>, ArrayD<f32>) {
+        #[cfg(feature = "libtorch")]
+        {
+            use crate::common::tensor_conversion::{tensor_to_array_f32, tensor_to_array_i64};
+            use crate::pipelines::common::{to_tensor_f32, to_tensor_i64};
+            let input_ids_array = input_ids;
+            let mask_array = mask;
+            let token_type_ids_array = _token_type_ids;
+            let input_embeds_array = input_embeds;
+            let input_ids = to_tensor_i64(input_ids);
+            let mask = to_tensor_i64(mask);
+            let token_type_ids = to_tensor_i64(_token_type_ids);
+            let input_embeds = to_tensor_f32(input_embeds);
+            match *self {
+                Self::Bert(ref model) => {
+                    let outputs = model.forward_t(
                         input_ids.as_ref(),
                         mask.as_ref(),
-                        token_type_ids.as_ref(),
+                        None,
                         None,
                         input_embeds.as_ref(),
+                        train,
+                    );
+                    (
+                        tensor_to_array_f32(&outputs.start_logits)
+                            .expect("Error converting model output to ndarray"),
+                        tensor_to_array_f32(&outputs.end_logits)
+                            .expect("Error converting model output to ndarray"),
                     )
-                    .expect("Error in ONNX forward pass.");
-                let start_logits = outputs
-                    .start_logits
-                    .map(|array| array_to_tensor_f32(&array).expect("Error converting ONNX output"))
-                    .unwrap();
-                let end_logits = outputs
-                    .end_logits
-                    .map(|array| array_to_tensor_f32(&array).expect("Error converting ONNX output"))
-                    .unwrap();
-                (start_logits, end_logits)
+                }
+                Self::Deberta(ref model) => {
+                    let outputs = model
+                        .forward_t(
+                            input_ids.as_ref(),
+                            mask.as_ref(),
+                            None,
+                            None,
+                            input_embeds.as_ref(),
+                            train,
+                        )
+                        .expect("Error in Deberta forward_t");
+                    (
+                        tensor_to_array_f32(&outputs.start_logits)
+                            .expect("Error converting model output to ndarray"),
+                        tensor_to_array_f32(&outputs.end_logits)
+                            .expect("Error converting model output to ndarray"),
+                    )
+                }
+                Self::DebertaV2(ref model) => {
+                    let outputs = model
+                        .forward_t(
+                            input_ids.as_ref(),
+                            mask.as_ref(),
+                            None,
+                            None,
+                            input_embeds.as_ref(),
+                            train,
+                        )
+                        .expect("Error in Deberta V2 forward_t");
+                    (
+                        tensor_to_array_f32(&outputs.start_logits)
+                            .expect("Error converting model output to ndarray"),
+                        tensor_to_array_f32(&outputs.end_logits)
+                            .expect("Error converting model output to ndarray"),
+                    )
+                }
+                Self::DistilBert(ref model) => {
+                    let outputs = model
+                        .forward_t(
+                            input_ids.as_ref(),
+                            mask.as_ref(),
+                            input_embeds.as_ref(),
+                            train,
+                        )
+                        .expect("Error in distilbert forward_t");
+                    (
+                        tensor_to_array_f32(&outputs.start_logits)
+                            .expect("Error converting model output to ndarray"),
+                        tensor_to_array_f32(&outputs.end_logits)
+                            .expect("Error converting model output to ndarray"),
+                    )
+                }
+                Self::MobileBert(ref model) => {
+                    let outputs = model
+                        .forward_t(
+                            input_ids.as_ref(),
+                            None,
+                            None,
+                            input_embeds.as_ref(),
+                            mask.as_ref(),
+                            train,
+                        )
+                        .expect("Error in mobilebert forward_t");
+                    (
+                        tensor_to_array_f32(&outputs.start_logits)
+                            .expect("Error converting model output to ndarray"),
+                        tensor_to_array_f32(&outputs.end_logits)
+                            .expect("Error converting model output to ndarray"),
+                    )
+                }
+                #[cfg(feature = "libtorch")]
+                Self::Roberta(ref model) | Self::XLMRoberta(ref model) => {
+                    let outputs = model.forward_t(
+                        input_ids.as_ref(),
+                        mask.as_ref(),
+                        None,
+                        None,
+                        input_embeds.as_ref(),
+                        train,
+                    );
+                    (
+                        tensor_to_array_f32(&outputs.start_logits)
+                            .expect("Error converting model output to ndarray"),
+                        tensor_to_array_f32(&outputs.end_logits)
+                            .expect("Error converting model output to ndarray"),
+                    )
+                }
+                Self::Albert(ref model) => {
+                    let outputs = model.forward_t(
+                        input_ids.as_ref(),
+                        mask.as_ref(),
+                        None,
+                        None,
+                        input_embeds.as_ref(),
+                        train,
+                    );
+                    (
+                        tensor_to_array_f32(&outputs.start_logits)
+                            .expect("Error converting model output to ndarray"),
+                        tensor_to_array_f32(&outputs.end_logits)
+                            .expect("Error converting model output to ndarray"),
+                    )
+                }
+                Self::XLNet(ref model) => {
+                    let outputs = model.forward_t(
+                        input_ids.as_ref(),
+                        mask.as_ref(),
+                        None,
+                        None,
+                        None,
+                        None,
+                        input_embeds.as_ref(),
+                        train,
+                    );
+                    (
+                        tensor_to_array_f32(&outputs.start_logits)
+                            .expect("Error converting model output to ndarray"),
+                        tensor_to_array_f32(&outputs.end_logits)
+                            .expect("Error converting model output to ndarray"),
+                    )
+                }
+                Self::Reformer(ref model) => {
+                    let outputs = model
+                        .forward_t(input_ids.as_ref(), None, None, mask.as_ref(), None, train)
+                        .expect("Error in reformer forward pass");
+                    (
+                        tensor_to_array_f32(&outputs.start_logits)
+                            .expect("Error converting model output to ndarray"),
+                        tensor_to_array_f32(&outputs.end_logits)
+                            .expect("Error converting model output to ndarray"),
+                    )
+                }
+                Self::Longformer(ref model) => {
+                    let outputs = model
+                        .forward_t(
+                            input_ids.as_ref(),
+                            mask.as_ref(),
+                            None,
+                            None,
+                            None,
+                            None,
+                            train,
+                        )
+                        .expect("Error in reformer forward pass");
+                    (
+                        tensor_to_array_f32(&outputs.start_logits)
+                            .expect("Error converting model output to ndarray"),
+                        tensor_to_array_f32(&outputs.end_logits)
+                            .expect("Error converting model output to ndarray"),
+                    )
+                }
+                Self::FNet(ref model) => {
+                    let outputs = model
+                        .forward_t(input_ids.as_ref(), None, None, None, train)
+                        .expect("Error in fnet forward pass");
+                    (
+                        tensor_to_array_f32(&outputs.start_logits)
+                            .expect("Error converting model output to ndarray"),
+                        tensor_to_array_f32(&outputs.end_logits)
+                            .expect("Error converting model output to ndarray"),
+                    )
+                }
+                #[cfg(feature = "onnx")]
+                Self::ONNX(ref model) => {
+                    let outputs = model
+                        .forward(
+                            input_ids_array,
+                            mask_array,
+                            token_type_ids_array,
+                            None,
+                            input_embeds_array,
+                        )
+                        .expect("Error in ONNX forward pass.");
+                    (outputs.start_logits.unwrap(), outputs.end_logits.unwrap())
+                }
+            }
+        }
+        #[cfg(not(feature = "libtorch"))]
+        {
+            match *self {
+                #[cfg(feature = "onnx")]
+                Self::ONNX(ref model) => {
+                    let outputs = model
+                        .forward(input_ids, mask, _token_type_ids, None, input_embeds)
+                        .expect("Error in ONNX forward pass.");
+                    (outputs.start_logits.unwrap(), outputs.end_logits.unwrap())
+                }
+                _ => unreachable!("no inference backend available"),
             }
         }
     }
@@ -818,20 +986,18 @@ impl QuestionAnsweringModel {
         while start < len_features {
             let end = start + min(len_features - start, batch_size);
             let batch_features = &mut features[start..end];
-            no_grad(|| {
+            {
                 let (input_ids, attention_masks, token_type_ids) =
                     self.pad_features(batch_features);
 
                 let (start_logits, end_logits) = self.qa_model.forward_t(
-                    Some(&input_ids),
-                    Some(&attention_masks),
+                    Some(&input_ids.into_dyn()),
+                    Some(&attention_masks.into_dyn()),
                     None,
-                    Some(&token_type_ids),
+                    Some(&token_type_ids.into_dyn()),
                     false,
                 );
 
-                let start_logits = start_logits.detach();
-                let end_logits = end_logits.detach();
                 let example_index_to_feature_end_position: Vec<(usize, i64)> = batch_features
                     .iter()
                     .enumerate()
@@ -847,22 +1013,32 @@ impl QuestionAnsweringModel {
                     let example = &qa_inputs[example_id];
                     for feature_idx in feature_id_start..max_feature_id {
                         let feature = &batch_features[feature_idx as usize];
-                        let p_mask = (Tensor::from_slice(&feature.p_mask) - 1)
-                            .abs()
-                            .to_device(start_logits.device())
-                            .eq(0);
+                        let start_row =
+                            start_logits.index_axis(ndarray::Axis(0), feature_idx as usize);
+                        let end_row = end_logits.index_axis(ndarray::Axis(0), feature_idx as usize);
+                        // Mask special tokens / padding positions out of the softmax
+                        let start_scores: Vec<f32> = start_row
+                            .iter()
+                            .zip(feature.p_mask.iter())
+                            .map(|(&logit, &mask)| if mask == 1 { f32::MIN } else { logit })
+                            .collect();
+                        let end_scores: Vec<f32> = end_row
+                            .iter()
+                            .zip(feature.p_mask.iter())
+                            .map(|(&logit, &mask)| if mask == 1 { f32::MIN } else { logit })
+                            .collect();
+                        let start_probs = crate::common::tensor_ops::softmax_last_dim(
+                            &Array1::from(start_scores).into_dyn(),
+                        );
+                        let end_probs = crate::common::tensor_ops::softmax_last_dim(
+                            &Array1::from(end_scores).into_dyn(),
+                        );
 
-                        let start = start_logits
-                            .get(feature_idx)
-                            .masked_fill(&p_mask, get_min(start_logits.kind()).unwrap());
-                        let end = end_logits
-                            .get(feature_idx)
-                            .masked_fill(&p_mask, get_min(start_logits.kind()).unwrap());
-
-                        let start = start.softmax(0, start.kind());
-                        let end = end.softmax(0, end.kind());
-
-                        let (starts, ends, scores) = self.decode(&start, &end, top_k);
+                        let (starts, ends, scores) = self.decode(
+                            start_probs.as_slice().unwrap(),
+                            end_probs.as_slice().unwrap(),
+                            top_k,
+                        );
 
                         for idx in 0..starts.len() {
                             let start_pos = feature.offsets[starts[idx] as usize]
@@ -890,7 +1066,7 @@ impl QuestionAnsweringModel {
                     let example_answers = example_top_k_answers_map.entry(example_id).or_default();
                     example_answers.extend(answers);
                 }
-            });
+            }
             start = end;
         }
         let mut all_answers = vec![];
@@ -905,31 +1081,29 @@ impl QuestionAnsweringModel {
         all_answers
     }
 
-    fn decode(&self, start: &Tensor, end: &Tensor, top_k: i64) -> (Vec<i64>, Vec<i64>, Vec<f64>) {
-        let outer = start.unsqueeze(-1).matmul(&end.unsqueeze(0));
-        let start_dim = start.size()[0];
-        let end_dim = end.size()[0];
-        let candidates = outer
-            .triu(0)
-            .tril(self.max_answer_len as i64 - 1)
-            .flatten(0, -1);
-        let idx_sort = if top_k == 1 {
-            candidates.argmax(0, true)
-        } else if candidates.size()[0] < top_k {
-            candidates.argsort(0, true)
-        } else {
-            candidates.argsort(0, true).slice(0, 0, top_k, 1)
-        };
-        let mut start: Vec<i64> = vec![];
-        let mut end: Vec<i64> = vec![];
-        let mut scores: Vec<f64> = vec![];
-        for flat_index_position in 0..idx_sort.size()[0] {
-            let flat_index = idx_sort.int64_value(&[flat_index_position]);
-            scores.push(candidates.double_value(&[flat_index]));
-            start.push(flat_index / start_dim);
-            end.push(flat_index % end_dim);
+    fn decode(&self, start: &[f32], end: &[f32], top_k: i64) -> (Vec<i64>, Vec<i64>, Vec<f64>) {
+        let start_dim = start.len();
+        let end_dim = end.len();
+        // Outer product of start and end probabilities, keeping only spans with
+        // length <= max_answer_len (equivalent to triu(0).tril(max_answer_len - 1))
+        let mut candidates: Vec<(f32, usize)> = Vec::with_capacity(start_dim * end_dim);
+        for i in 0..start_dim {
+            let max_end = min(end_dim, i + self.max_answer_len);
+            for j in i..max_end {
+                candidates.push((start[i] * end[j], i * end_dim + j));
+            }
         }
-        (start, end, scores)
+        candidates.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+        let count = min(candidates.len(), top_k.max(0) as usize);
+        let mut starts: Vec<i64> = vec![];
+        let mut ends: Vec<i64> = vec![];
+        let mut scores: Vec<f64> = vec![];
+        for &(score, flat_index) in candidates.iter().take(count) {
+            scores.push(score as f64);
+            starts.push((flat_index / end_dim) as i64);
+            ends.push((flat_index % end_dim) as i64);
+        }
+        (starts, ends, scores)
     }
 
     fn generate_features(
@@ -1033,7 +1207,7 @@ impl QuestionAnsweringModel {
         spans
     }
 
-    fn pad_features(&self, features: &mut [QaFeature]) -> (Tensor, Tensor, Tensor) {
+    fn pad_features(&self, features: &mut [QaFeature]) -> (Array2<i64>, Array2<i64>, Array2<i64>) {
         let max_len = features
             .iter()
             .map(|feature| feature.input_ids.len())
@@ -1049,7 +1223,6 @@ impl QuestionAnsweringModel {
                 attention_mask.resize(max_len, 0);
                 attention_mask
             })
-            .map(|input| Tensor::from_slice(&(input)))
             .collect::<Vec<_>>();
 
         for feature in features.iter_mut() {
@@ -1061,22 +1234,21 @@ impl QuestionAnsweringModel {
                 .resize(max_len, *feature.token_type_ids.last().unwrap_or(&0));
         }
 
-        let padded_input_ids = features
-            .iter_mut()
-            .map(|input| Tensor::from_slice(input.input_ids.as_slice()))
-            .collect::<Vec<_>>();
-
-        let padded_token_type_ids = features
-            .iter_mut()
-            .map(|input| Tensor::from_slice(input.token_type_ids.as_slice()))
-            .collect::<Vec<_>>();
-
-        let input_ids = Tensor::stack(&padded_input_ids, 0).to(self.device);
-        let attention_masks = Tensor::stack(&attention_masks, 0).to(self.device);
-        let token_type_ids = Tensor::stack(&padded_token_type_ids, 0)
-            .to(self.device)
-            .to_kind(Kind::Int64);
-        (input_ids, attention_masks, token_type_ids)
+        let mut input_ids = Array2::<i64>::zeros((features.len(), max_len));
+        let mut attention_mask_array = Array2::<i64>::zeros((features.len(), max_len));
+        let mut token_type_ids = Array2::<i64>::zeros((features.len(), max_len));
+        for (row, feature) in features.iter().enumerate() {
+            for (col, &id) in feature.input_ids.iter().enumerate() {
+                input_ids[[row, col]] = id;
+            }
+            for (col, &mask) in attention_masks[row].iter().enumerate() {
+                attention_mask_array[[row, col]] = mask;
+            }
+            for (col, &segment) in feature.token_type_ids.iter().enumerate() {
+                token_type_ids[[row, col]] = segment as i64;
+            }
+        }
+        (input_ids, attention_mask_array, token_type_ids)
     }
 
     fn get_mask(&self, encoded_span: &TokenizedInput, question_length: usize) -> Vec<i8> {

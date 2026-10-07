@@ -75,7 +75,7 @@ doc-only = ["libtorch", "tch/doc-only"]
 all-tests = []
 remote = ["cached-path", "dirs", "lazy_static"]
 download-libtorch = ["libtorch", "tch/download-libtorch"]
-onnx = ["dep:ort", "dep:ndarray"]
+onnx = ["dep:ort"]
 cuda = ["onnx", "ort/cuda"]
 rustls-tls = ["cached-path/rustls-tls"]
 default-tls = ["cached-path/default-tls"]
@@ -106,7 +106,7 @@ ort = { version = "=2.0.0-rc.13", optional = true, default-features = false, fea
     "copy-dylibs",
     "tls-rustls",
 ] }
-ndarray = { version = "0.17", optional = true }
+ndarray = { version = "0.17" }
 tokenizers = { version = "0.21", optional = true, default-features = false, features = [
     "onig",
 ] }

@@ -56,12 +56,18 @@
 //! # }
 //! ```
 
+pub mod config;
+#[cfg(feature = "libtorch")]
 mod electra_model;
+#[cfg(feature = "libtorch")]
 mod embeddings;
 
+pub use config::{
+    ElectraConfig, ElectraConfigResources, ElectraModelResources, ElectraVocabResources,
+};
+#[cfg(feature = "libtorch")]
 pub use electra_model::{
-    ElectraConfig, ElectraConfigResources, ElectraDiscriminator, ElectraDiscriminatorHead,
-    ElectraDiscriminatorOutput, ElectraForMaskedLM, ElectraForTokenClassification,
-    ElectraGeneratorHead, ElectraMaskedLMOutput, ElectraModel, ElectraModelOutput,
-    ElectraModelResources, ElectraTokenClassificationOutput, ElectraVocabResources,
+    ElectraDiscriminator, ElectraDiscriminatorHead, ElectraDiscriminatorOutput, ElectraForMaskedLM,
+    ElectraForTokenClassification, ElectraGeneratorHead, ElectraMaskedLMOutput, ElectraModel,
+    ElectraModelOutput, ElectraTokenClassificationOutput,
 };

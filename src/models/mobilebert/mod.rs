@@ -50,14 +50,22 @@
 //! # }
 //! ```
 
+#[cfg(feature = "libtorch")]
 mod attention;
+pub mod config;
+#[cfg(feature = "libtorch")]
 mod embeddings;
+#[cfg(feature = "libtorch")]
 mod encoder;
+#[cfg(feature = "libtorch")]
 mod mobilebert_model;
 
+pub use config::{
+    MobileBertConfig, MobileBertConfigResources, MobileBertModelResources, MobileBertVocabResources,
+};
+#[cfg(feature = "libtorch")]
 pub use mobilebert_model::{
-    MobileBertConfig, MobileBertConfigResources, MobileBertForMaskedLM,
-    MobileBertForMultipleChoice, MobileBertForQuestionAnswering,
-    MobileBertForSequenceClassification, MobileBertForTokenClassification, MobileBertModel,
-    MobileBertModelResources, MobileBertVocabResources, NoNorm, NormalizationType,
+    MobileBertForMaskedLM, MobileBertForMultipleChoice, MobileBertForQuestionAnswering,
+    MobileBertForSequenceClassification, MobileBertForTokenClassification, MobileBertModel, NoNorm,
+    NormalizationType,
 };
