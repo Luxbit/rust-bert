@@ -1525,21 +1525,46 @@ impl PrivateLanguageGenerator for XLNetGenerator {
         #[cfg(feature = "libtorch")]
         let (
             input_ids,
-            attention_mask,
+            _attention_mask,
             _token_type_ids,
             _position_ids,
             _input_embeds,
             _encoder_outputs,
-            decoder_input_ids,
+            _decoder_input_ids,
         ) = (
             option_array2_to_tensor(input_ids),
             option_array2_to_tensor(attention_mask),
             option_array2_to_tensor(_token_type_ids),
             option_array2_to_tensor(_position_ids),
-            option_array2_to_tensor(decoder_input_ids),
             option_array_to_tensor_f32(_input_embeds),
             option_array_to_tensor_f32(_encoder_outputs),
+            option_array2_to_tensor(decoder_input_ids),
         );
+        // XLNet generation predicts only the last (dummy) token of the prepared
+        // input: the permutation mask masks out that position and the target
+        // mapping selects it. Both are fully determined by the input shape, so
+        // they are rebuilt here at every step (mirroring the reference
+        // `prepare_inputs_for_generation`) instead of being carried through the
+        // backend-neutral `PreparedInput`, which only supports 2-D arrays.
+        #[cfg(feature = "libtorch")]
+        let (perm_mask, target_mapping) = match &input_ids {
+            Some(input_ids) => {
+                let batch_size = input_ids.size()[0];
+                let sequence_length = input_ids.size()[1];
+                let perm_mask = Tensor::zeros(
+                    [batch_size, sequence_length, sequence_length],
+                    (Kind::Float, input_ids.device()),
+                );
+                let _ = perm_mask.narrow(2, sequence_length - 1, 1).fill_(1.0);
+                let target_mapping = Tensor::zeros(
+                    [batch_size, 1, sequence_length],
+                    (Kind::Float, input_ids.device()),
+                );
+                let _ = target_mapping.narrow(2, sequence_length - 1, 1).fill_(1.0);
+                (Some(perm_mask), Some(target_mapping))
+            }
+            None => (None, None),
+        };
         #[cfg(not(feature = "libtorch"))]
         let (_, _, _, _, _, _, _) = (
             input_ids,
@@ -1555,9 +1580,8 @@ impl PrivateLanguageGenerator for XLNetGenerator {
                 input_ids.as_ref(),
                 None,
                 layer_past,
-                attention_mask.as_ref(),
-                // For XLNet the decoder_input_ids are used as a placeholder for the target mapping
-                decoder_input_ids.as_ref(),
+                perm_mask.as_ref(),
+                target_mapping.as_ref(),
                 None,
                 None,
                 train,
@@ -1566,9 +1590,8 @@ impl PrivateLanguageGenerator for XLNetGenerator {
                 input_ids.as_ref(),
                 None,
                 None,
-                attention_mask.as_ref(),
-                // For XLNet the decoder_input_ids are used as a placeholder for the target mapping
-                decoder_input_ids.as_ref(),
+                perm_mask.as_ref(),
+                target_mapping.as_ref(),
                 None,
                 None,
                 train,
@@ -1617,18 +1640,9 @@ impl PrivateLanguageGenerator for XLNetGenerator {
             }
             _ => Tensor::cat(&[input_ids, dummy_token], 1),
         };
-        let sequence_length = input_ids.size()[1];
-        let perm_mask = Tensor::zeros(
-            [effective_batch_size, sequence_length, sequence_length],
-            (Kind::Float, input_ids.device()),
-        );
-        let _ = perm_mask.narrow(2, sequence_length - 1, 1).fill_(1.0);
-
-        let target_mapping = Tensor::zeros(
-            [effective_batch_size, 1, sequence_length],
-            (Kind::Float, input_ids.device()),
-        );
-        let _ = target_mapping.narrow(2, sequence_length - 1, 1).fill_(1.0);
+        // The permutation mask and target mapping consumed by the XLNet forward
+        // pass are rebuilt in `forward_t` from the prepared input shape; the
+        // backend-neutral `PreparedInput` cannot carry their 3-D layout.
 
         match past {
             Cache::XLNetCache(past) => {
@@ -1656,19 +1670,9 @@ impl PrivateLanguageGenerator for XLNetGenerator {
                                 .into_dimensionality::<ndarray::Ix2>()
                                 .unwrap(),
                         ),
-                        prepared_attention_mask: Some(
-                            crate::common::tensor_conversion::tensor_to_array_i64(&perm_mask)
-                                .unwrap()
-                                .into_dimensionality::<ndarray::Ix2>()
-                                .unwrap(),
-                        ),
+                        prepared_attention_mask: None,
                         prepared_encoder_output: None,
-                        prepared_decoder_input: Some(
-                            crate::common::tensor_conversion::tensor_to_array_i64(&target_mapping)
-                                .unwrap()
-                                .into_dimensionality::<ndarray::Ix2>()
-                                .unwrap(),
-                        ),
+                        prepared_decoder_input: None,
                         prepared_position_ids: None,
                         prepared_past: Cache::XLNetCache(Some(past)),
                     }
@@ -1680,19 +1684,9 @@ impl PrivateLanguageGenerator for XLNetGenerator {
                                 .into_dimensionality::<ndarray::Ix2>()
                                 .unwrap(),
                         ),
-                        prepared_attention_mask: Some(
-                            crate::common::tensor_conversion::tensor_to_array_i64(&perm_mask)
-                                .unwrap()
-                                .into_dimensionality::<ndarray::Ix2>()
-                                .unwrap(),
-                        ),
+                        prepared_attention_mask: None,
                         prepared_encoder_output: None,
-                        prepared_decoder_input: Some(
-                            crate::common::tensor_conversion::tensor_to_array_i64(&target_mapping)
-                                .unwrap()
-                                .into_dimensionality::<ndarray::Ix2>()
-                                .unwrap(),
-                        ),
+                        prepared_decoder_input: None,
                         prepared_position_ids: None,
                         prepared_past: Cache::XLNetCache(None),
                     }
@@ -1705,19 +1699,9 @@ impl PrivateLanguageGenerator for XLNetGenerator {
                         .into_dimensionality::<ndarray::Ix2>()
                         .unwrap(),
                 ),
-                prepared_attention_mask: Some(
-                    crate::common::tensor_conversion::tensor_to_array_i64(&perm_mask)
-                        .unwrap()
-                        .into_dimensionality::<ndarray::Ix2>()
-                        .unwrap(),
-                ),
+                prepared_attention_mask: None,
                 prepared_encoder_output: None,
-                prepared_decoder_input: Some(
-                    crate::common::tensor_conversion::tensor_to_array_i64(&target_mapping)
-                        .unwrap()
-                        .into_dimensionality::<ndarray::Ix2>()
-                        .unwrap(),
-                ),
+                prepared_decoder_input: None,
                 prepared_position_ids: None,
                 prepared_past: Cache::XLNetCache(None),
             },

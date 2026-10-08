@@ -35,7 +35,10 @@ pub fn sigmoid(array: &ArrayD<f32>) -> ArrayD<f32> {
 /// Select the top-k elements along the last dimension.
 ///
 /// Returns the k largest values (sorted in descending order) and their indices,
-/// mirroring the behavior of `tch::Tensor::topk` with `dim: -1, sorted: true`.
+/// mirroring the behavior of `tch::Tensor::topk` with `dim: -1, sorted: true`:
+/// exact ties are resolved by taking the lowest index first. This matters for
+/// beam search, where tied candidate scores sit right at the active-beam /
+/// hypothesis rank boundary.
 #[allow(dead_code)] // used by the generation pipelines from phase 2 onwards
 pub fn topk_last_dim(array: &ArrayD<f32>, k: usize) -> (ArrayD<f32>, ArrayD<i64>) {
     let axis = array.ndim() - 1;
@@ -52,10 +55,11 @@ pub fn topk_last_dim(array: &ArrayD<f32>, k: usize) -> (ArrayD<f32>, ArrayD<i64>
     let flat = view.to_shape(IxDyn(&[num_lanes, lane_len])).unwrap();
     for lane in flat.rows() {
         let mut order: Vec<usize> = (0..lane_len).collect();
-        order.sort_unstable_by(|&a, &b| {
+        order.sort_by(|&a, &b| {
             lane[b]
                 .partial_cmp(&lane[a])
                 .unwrap_or(std::cmp::Ordering::Equal)
+                .then(a.cmp(&b))
         });
         order.truncate(k);
         for &index in &order {

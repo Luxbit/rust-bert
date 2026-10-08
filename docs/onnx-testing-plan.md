@@ -210,13 +210,34 @@ openai-gpt, reformer, prophetnet, distilgpt2). The parity suite runs 11
 cross-backend tests, all green — greedy and beam decoding now produce identical
 text on both backends.
 
-**Remaining known issues:**
-- Marian beam search diverges from its golden at a single near-tie token
-  ("paresseux" vs "pare" + EOS); every other checkpoint matches exactly.
-- `xlnet_generation_beam_search` is `#[ignore]`d: XLNet's 3-D permutation mask
-  cannot be carried by the 2-D `PreparedInput` (needs a type-level change).
-- Per-token scores are NaN in both backends when a `prefix_allowed_tokens_fn`
-  masks all but the forced token (log-softmax over a fully-masked row).
+**Remaining known issues (resolved 2026-10-08, second pass):**
+- ~~Marian beam search diverges from its golden at a single near-tie token~~
+  **Fixed — and it was not a near-tie.** Instrumented beam dumps showed the
+  batch bookkeeping kept pushing candidate entries for batch elements that had
+  already finished (`done`), so `beam_indices` grew past `batch * num_beams`
+  rows every step, `input_ids` grew accordingly (6 → 9 rows for
+  batch=2 × beams=3), and the per-batch top-k slice then swallowed another
+  batch element's rows — completed hypotheses from one sentence leaked into
+  the other's output. The reference checks `done` *before* processing each
+  batch element; the driver now does the same. Two adjacent hardening fixes
+  landed with it: the flattened-candidate index is divided by the width of the
+  merged score matrix (the model's actual logits width), and `topk_last_dim`
+  breaks exact score ties by lowest index, mirroring CPU `torch.topk` — the
+  marian endgame is full of exact ties right at the active-beam / hypothesis
+  rank boundary.
+- ~~`xlnet_generation_beam_search` is `#[ignore]`d~~ **Fixed.** The
+  permutation mask and target mapping XLNet needs are fully determined by the
+  prepared input's shape, so they are now rebuilt inside the XLNet generator's
+  `forward_t` at each step instead of being smuggled through the 2-D
+  `PreparedInput` fields; the test is un-ignored and passes.
+- Per-token scores with a `prefix_allowed_tokens_fn`: when the combination of
+  the prefix constraint and the (default) `no_repeat_ngram_size` ban masks a
+  row completely — e.g. the forced token is the only allowed token and has
+  just completed a trigram — the log-softmax of the fully-masked row is NaN.
+  This matches the reference implementation, which applies log-softmax after
+  the processors and produces NaN for the same inputs; the fully-masked row's
+  argmax deterministically selects token 0 in both backends. No code change;
+  the parity test documents the agreement.
 - The Optimum GPT2 export has no `position_ids` input, so left-padded
   multi-prompt beam search cannot be compared cross-backend (the parity test
   uses equal-length prompts).

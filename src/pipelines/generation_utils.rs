@@ -1214,7 +1214,6 @@ pub(crate) mod private_generation_utils {
                 })
                 .collect::<Vec<BeamHypotheses>>();
 
-            let vocab_size = self.get_vocab_size();
             // Decoder-only generation tiles the prompts across the beams so that
             // every step operates on (batch * num_beams) rows, keeping the
             // attention mask aligned with the inputs (reference behavior).
@@ -1505,23 +1504,26 @@ pub(crate) mod private_generation_utils {
                         // Effective beam id of each candidate: the flattened
                         // candidate index maps to (beam within group, token);
                         // beams are laid out per batch element as
-                        // [batch_index * rows_per_batch, ...).
+                        // [batch_index * rows_per_batch, ...). The division
+                        // width must be the width of the merged score matrix
+                        // (the model's actual logits width) for the flattened
+                        // index to decompose back into (beam, token).
                         let rows_per_batch = if num_beam_groups > 1 {
                             group_size
                         } else {
                             gen_opt.num_beams
                         } as usize;
-                        let vocab_width = vocab_size;
+                        let vocab_width = next_token_logits.ncols();
                         let effective_beam_ids: Vec<i64> = row_tokens
                             .iter()
                             .map(|&token| {
-                                let beam_id = token / vocab_width;
+                                let beam_id = token / vocab_width as i64;
                                 batch_index as i64 * rows_per_batch as i64 + beam_id
                             })
                             .collect();
                         let token_ids: Vec<i64> = row_tokens
                             .iter()
-                            .map(|&token| token - (token / vocab_width) * vocab_width)
+                            .map(|&token| token - (token / vocab_width as i64) * vocab_width as i64)
                             .collect();
                         let max_score =
                             row_scores.iter().copied().fold(f32::NEG_INFINITY, f32::max);
@@ -1544,11 +1546,19 @@ pub(crate) mod private_generation_utils {
                             })
                             .collect();
 
-                        for (candidate_index, &active) in is_active.iter().enumerate() {
-                            if active {
-                                group_beam_scores.push(row_scores[candidate_index]);
-                                group_beam_tokens.push(token_ids[candidate_index]);
-                                group_beam_indices.push(effective_beam_ids[candidate_index]);
+                        // Active candidates become the next beams; batches that
+                        // are already done are padded instead and must not
+                        // contribute extra entries here (the reference checks
+                        // `done` before processing each batch element — pushing
+                        // both the active candidates and the pad entries would
+                        // grow `beam_indices` past `batch * num_beams` rows).
+                        if !done[batch_index] {
+                            for (candidate_index, &active) in is_active.iter().enumerate() {
+                                if active {
+                                    group_beam_scores.push(row_scores[candidate_index]);
+                                    group_beam_tokens.push(token_ids[candidate_index]);
+                                    group_beam_indices.push(effective_beam_ids[candidate_index]);
+                                }
                             }
                         }
 
