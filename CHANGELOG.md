@@ -28,6 +28,17 @@ on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   attention masks follow the beam selection. Beam search output matches the
   reference implementation for all model suites (GPT2, BART, T5, Marian, MBart,
   M2M100, LongT5, GPT-Neo, GPT-J, OpenAI GPT, Reformer, ProphetNet).
+- Fixed batch-element bookkeeping in beam search: candidate entries were still
+  pushed for finished batch elements, growing the beam rows past
+  `batch * num_beams` and leaking completed hypotheses from one batch element
+  into another's output (visible with Marian multi-sentence translation).
+- The flattened beam-search candidate index is now split by the model's actual
+  logits width, and exact score ties are broken by lowest index (mirroring
+  `torch.topk`).
+- Re-enabled `xlnet_generation_beam_search`: XLNet's generation-time
+  permutation mask and target mapping are rebuilt in its forward pass from the
+  prepared input shape instead of being carried through the 2-D
+  `PreparedInput`.
 
 
 ## [0.24.0] - 2026-10-08

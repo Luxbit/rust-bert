@@ -652,8 +652,11 @@ mod tests {
             let onnx_scores = onnx.token_scores.as_ref().unwrap();
             for (t, o) in torch_scores.iter().zip(onnx_scores.iter()) {
                 if t.is_nan() && o.is_nan() {
-                    // Forced tokens produce NaN scores in both backends
-                    // (log-softmax over a fully-masked row); they agree.
+                    // Once the forced token completes a trigram, the default
+                    // `no_repeat_ngram_size = 3` ban combined with the prefix
+                    // constraint masks the whole row; the log-softmax of a
+                    // fully-masked row is NaN in both backends (the reference
+                    // implementation behaves identically). They agree.
                     continue;
                 }
                 assert!((t - o).abs() < 1e-2, "token scores diverge: {} vs {}", t, o);
