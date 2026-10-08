@@ -746,7 +746,7 @@ impl PrivateLanguageGenerator for GPT2Generator {
             let mut cumulative = 0i64;
             for col in 0..attention_mask.ncols() {
                 cumulative += attention_mask[[row, col]];
-                position_ids[[row, col]] = max(cumulative - 1, 1);
+                position_ids[[row, col]] = max(cumulative - 1, 0);
             }
         }
 

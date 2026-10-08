@@ -564,7 +564,7 @@ impl SentenceEmbeddingsModel {
             let padding = max_len - token_ids.len();
             tokens_masks
                 .row_mut(row)
-                .slice_mut(ndarray::s![padding..])
+                .slice_mut(ndarray::s![..max_len - padding])
                 .fill(1);
             token_ids.extend(vec![pad_token_id; padding]);
             tokens_ids

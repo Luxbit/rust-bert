@@ -5,7 +5,7 @@ use crate::pipelines::onnx::config::{
 };
 use crate::pipelines::onnx::conversion::{ort_output_to_array_f32, ONNXInput};
 use crate::RustBertError;
-use ndarray::ArrayD;
+use ndarray::{ArrayD, IxDyn};
 use ort::session::Session;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -95,12 +95,29 @@ impl ONNXEncoder {
             input_dict.insert(INPUT_EMBEDS, ONNXInput::F32(input_embeds.clone()));
         }
 
+        let reference_shape: Vec<usize> = input_ids
+            .map(|array| array.shape().to_vec())
+            .or_else(|| input_embeds.map(|array| array.shape().to_vec()))
+            .map(|mut shape| {
+                shape.truncate(2);
+                shape
+            })
+            .unwrap_or_default();
+
         let mut input_values = Vec::with_capacity(self.name_mapping.input_names.len());
         for input_name in &self.name_mapping.input_names {
-            let input = input_dict.remove(input_name.as_str()).ok_or_else(|| {
-                RustBertError::OrtError(format!("{input_name} not found but expected by model."))
-            })?;
-            input_values.push((input_name.clone(), input.into_value()?));
+            if let Some(input) = input_dict.remove(input_name.as_str()) {
+                input_values.push((input_name.clone(), input.into_value()?));
+            } else if input_name.as_str() == TOKEN_TYPE_IDS || input_name.as_str() == POSITION_IDS {
+                // BERT-style exports declare the segment / position ids as required
+                // inputs. Their canonical default for single-sentence inputs is 0.
+                let zeros = ndarray::ArrayD::<i64>::zeros(IxDyn(&reference_shape));
+                input_values.push((input_name.clone(), ONNXInput::I64(zeros).into_value()?));
+            } else {
+                return Err(RustBertError::OrtError(format!(
+                    "{input_name} not found but expected by model."
+                )));
+            }
         }
 
         let mut session = self.session.lock().unwrap();

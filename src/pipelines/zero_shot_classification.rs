@@ -99,9 +99,7 @@
 //! ```
 
 use crate::common::tensor_ops::{argmax_last_dim, softmax_last_dim};
-#[cfg(feature = "libtorch")]
-use crate::pipelines::common::ConfigOption;
-use crate::pipelines::common::{ModelResource, ModelType, TokenizerOption};
+use crate::pipelines::common::{ConfigOption, ModelResource, ModelType, TokenizerOption};
 use crate::pipelines::sequence_classification::Label;
 use crate::resources::ResourceProvider;
 use crate::Device;
@@ -710,6 +708,9 @@ type TokenizedLabelPairs = (Array2<i64>, Array2<i64>, Array2<i64>);
 pub struct ZeroShotClassificationModel {
     tokenizer: TokenizerOption,
     zero_shot_classifier: ZeroShotClassificationOption,
+    /// Positions of the (contradiction, entailment) logits in the model output, read
+    /// from the model configuration `id2label` mapping (defaults to (0, 2)).
+    nli_logit_indices: (usize, usize),
 }
 
 impl ZeroShotClassificationModel {
@@ -780,11 +781,50 @@ impl ZeroShotClassificationModel {
         tokenizer: TokenizerOption,
     ) -> Result<ZeroShotClassificationModel, RustBertError> {
         let zero_shot_classifier = ZeroShotClassificationOption::new(&config)?;
+        let nli_logit_indices = Self::get_nli_logit_indices(&ConfigOption::from_file(
+            config.model_type,
+            config
+                .config_resource
+                .get_local_path()?
+                .to_str()
+                .ok_or_else(|| {
+                    RustBertError::InvalidConfigurationError("Invalid config path".to_string())
+                })?,
+        ));
 
         Ok(ZeroShotClassificationModel {
             tokenizer,
             zero_shot_classifier,
+            nli_logit_indices,
         })
+    }
+
+    /// Reads the (contradiction, entailment) logit positions from the model
+    /// configuration `id2label` mapping. Falls back to the (0, 2) positions used
+    /// by most Natural Language Inference exports if the mapping is not provided.
+    fn get_nli_logit_indices(model_config: &ConfigOption) -> (usize, usize) {
+        let id2label = match model_config {
+            ConfigOption::Bert(config) | ConfigOption::Roberta(config) => config.id2label.clone(),
+            ConfigOption::DistilBert(config) => config.id2label.clone(),
+            ConfigOption::MobileBert(config) => config.id2label.clone(),
+            ConfigOption::Deberta(config) => config.id2label.clone(),
+            ConfigOption::DebertaV2(config) => config.id2label.clone(),
+            _ => None,
+        };
+        if let Some(id2label) = id2label {
+            let find_index = |name: &str| {
+                id2label
+                    .iter()
+                    .find(|(_, label)| label.to_uppercase().contains(name))
+                    .map(|(id, _)| *id as usize)
+            };
+            if let (Some(contradiction_index), Some(entailment_index)) =
+                (find_index("CONTRADICTION"), find_index("ENTAILMENT"))
+            {
+                return (contradiction_index, entailment_index);
+            }
+        }
+        (0, 2)
     }
 
     /// Get a reference to the model tokenizer.
@@ -958,9 +998,10 @@ impl ZeroShotClassificationModel {
         for sentence_idx in 0..num_inputs {
             let label_scores: Vec<f32> = (0..num_labels)
                 .map(|label_idx| {
+                    let (contradiction_index, entailment_index) = self.nli_logit_indices;
                     let pair = [
-                        output[[sentence_idx, label_idx, 0]],
-                        output[[sentence_idx, label_idx, 2]],
+                        output[[sentence_idx, label_idx, contradiction_index]],
+                        output[[sentence_idx, label_idx, entailment_index]],
                     ];
                     softmax_last_dim(&Array1::from(pair.to_vec()).into_dyn())[1]
                 })
@@ -1111,10 +1152,11 @@ impl ZeroShotClassificationModel {
         // Entailment probability from the [contradiction, entailment] logit pair.
         let mut entailment = Array2::<f32>::zeros((num_inputs, num_labels));
         for sentence_idx in 0..num_inputs {
+            let (contradiction_index, entailment_index) = self.nli_logit_indices;
             for label_idx in 0..num_labels {
                 let pair = [
-                    output[[sentence_idx, label_idx, 0]],
-                    output[[sentence_idx, label_idx, 2]],
+                    output[[sentence_idx, label_idx, contradiction_index]],
+                    output[[sentence_idx, label_idx, entailment_index]],
                 ];
                 entailment[[sentence_idx, label_idx]] =
                     softmax_last_dim(&Array1::from(pair.to_vec()).into_dyn())[1];
