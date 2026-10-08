@@ -7,14 +7,21 @@
 
 Rust-native state-of-the-art Natural Language Processing models and pipelines.
 Port of Hugging Face's
-[Transformers library](https://github.com/huggingface/transformers), using
-[tch-rs](https://github.com/LaurentMazare/tch-rs) or
-[onnxruntime bindings](https://github.com/pykeio/ort) and pre-processing from
-[rust-tokenizers](https://github.com/guillaume-be/rust-tokenizers). Supports
-multi-threaded tokenization and GPU inference. This repository exposes the model
-base architecture, task-specific heads (see below) and
-[ready-to-use pipelines](#ready-to-use-pipelines). [Benchmarks](#benchmarks) are
-available at the end of this document.
+[Transformers library](https://github.com/huggingface/transformers), with
+pre-processing from [rust-tokenizers](https://github.com/guillaume-be/rust-tokenizers).
+Every pipeline can run on either of two interchangeable inference backends,
+selected at compile time with cargo features:
+
+- **LibTorch** via the [tch](https://github.com/LaurentMazare/tch-rs) crate
+  (the default backend): runs PyTorch weight files (`.pt`) directly.
+- **ONNX Runtime** via the [ort](https://github.com/pykeio/ort) crate: runs
+  ONNX-exported models, with no LibTorch dependency at all when used on its
+  own.
+
+Both backends support multi-threaded tokenization and GPU inference. This
+repository exposes the model base architecture, task-specific heads (see below)
+and [ready-to-use pipelines](#ready-to-use-pipelines).
+[Benchmarks](#benchmarks) are available at the end of this document.
 
 Get started with tasks including question answering, named entity recognition,
 translation, summarization, text generation, conversational agents and more in
@@ -83,31 +90,46 @@ The tasks currently supported include:
 
 </details>
 
+&nbsp;
+
+The matrix above reflects model and task availability, not the choice of
+inference backend: every pipeline runs on both LibTorch and ONNX Runtime (ONNX
+requires the model to be exported to ONNX, see
+[ONNX Support](#onnx-support-optional); exports are available for most of these
+architectures).
+
 ## Getting started
 
-The crate supports two inference backends, selected via cargo features:
+### Choose your inference backend
 
-- `libtorch` (enabled by default): the complete set of models and pipelines,
-  running on the C++ LibTorch API via the
-  [tch](https://github.com/LaurentMazare/tch-rs) crate.
-- `onnx`: inference on models exported to ONNX, running on the
-  [onnxruntime](https://onnxruntime.ai) C++ library via the
-  [ort](https://github.com/pykeio/ort) crate.
+The same pipelines and model APIs work with either backend — the difference is
+which model files they load and which C++ library they link to. The backend is
+selected with cargo features, and at least one must be enabled:
 
-At least one backend must be enabled. Every pipeline is available with the ONNX
-backend only, allowing to build and run this crate without any LibTorch
-dependency:
+| You want... | Cargo.toml |
+|-------------|------------|
+| The default: LibTorch (tch), PyTorch `.pt` weights | `rust-bert = "0.24.0"` |
+| ONNX Runtime only (no LibTorch dependency), ONNX exports | `rust-bert = { version = "0.24.0", default-features = false, features = ["onnx", "remote"] }` |
+| Both backends in the same binary | `rust-bert = { version = "0.24.0", features = ["onnx"] }` |
 
-```toml
-[dependencies]
-rust-bert = { version = "0.24.0", default-features = false, features = ["onnx", "remote"] }
-```
+Notes:
 
-With this configuration the models must be provided as ONNX exports (see the
-[ONNX Support](#onnx-support-optional) section below); PyTorch weight files
-(`.pt`) require the `libtorch` feature. Ready-to-run examples are available in
-the `./examples` directory (`onnx-question-answering`, `onnx-text-generation`,
-`onnx-translation`, ...).
+- The `remote` feature (enabled by default) lets pipelines download pretrained
+  models from Hugging Face's hub; drop it if you only load local resources.
+- With `default-features = false`, add a TLS feature for remote downloads:
+  `default-tls` (default) or `rustls-tls`.
+- `features = ["cuda"]` implies `onnx` and enables the onnxruntime CUDA
+  execution provider. For LibTorch, GPU placement is selected through the
+  device in the pipeline configuration.
+- Model file formats differ: the `libtorch` feature loads PyTorch weight files
+  (`.pt`), while the `onnx` feature loads ONNX exports (see
+  [ONNX Support](#onnx-support-optional)). Every pipeline is available with the
+  ONNX backend only, allowing to build and run this crate without any LibTorch
+  dependency. Ready-to-run examples are available in the `./examples` directory
+  (`onnx-question-answering`, `onnx-text-generation`, `onnx-translation`, ...).
+
+The rest of this section covers the LibTorch installation; ONNX Runtime setup
+is described in the [ONNX Support](#onnx-support-optional) section below.
 
 ### LibTorch installation (default `libtorch` feature)
 
@@ -185,12 +207,13 @@ cargo run --example sentence_embeddings
 
 ## ONNX Support (Optional)
 
-ONNX support can be enabled via the optional `onnx` feature. This crate then
-leverages the [ort](https://github.com/pykeio/ort) crate (2.0, requiring
+The ONNX backend can be enabled via the optional `onnx` feature. This crate
+then leverages the [ort](https://github.com/pykeio/ort) crate (2.0, requiring
 onnxruntime >= 1.17) with bindings to the onnxruntime C++ library. We refer the
-user to this page project for further installation instructions/support. The
-`onnx` feature can be used standalone (with `default-features = false`) to run
-every pipeline without LibTorch, or alongside the default `libtorch` feature.
+user to the ort project page for further installation instructions/support.
+The `onnx` feature can be used standalone (with `default-features = false`) to
+run every pipeline without LibTorch, or alongside the default `libtorch`
+feature when both backends are needed in the same binary.
 
 1. Enable the optional `onnx` feature. The `rust-bert` crate does not include
    any optional dependencies for `ort`, the end user should select the set of
@@ -231,7 +254,7 @@ architecture are available (and exposed for convenience) in the `encoder` and
 `decoder` modules, respectively.
 
 Generation models (pure decoder or encoder/decoder architectures) are available
-in the `models` module. ost pipelines are available for ONNX model checkpoints,
+in the `models` module. Most pipelines are available for ONNX model checkpoints,
 including sequence classification, zero-shot classification, token
 classification (including named entity recognition and part-of-speech tagging),
 question answering, text generation, summarization and translation. These models
