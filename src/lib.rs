@@ -90,7 +90,7 @@
 //! [dependencies]
 //! rust-bert = { version = "0.25.0", default-features = false, features = ["onnx", "remote"] }
 //! ```
-//! With this configuration the models must be provided as ONNX exports (see the [ONNX Support](#onnx-support-optional) section below); PyTorch weight files (`.pt`) require the `libtorch` feature.
+//! With this configuration the models must be provided as ONNX exports (see the [ONNX Runtime backend](#onnx-runtime-backend-optional-onnx-feature) section below); PyTorch weight files (`.pt`) require the `libtorch` feature.
 //! The `cuda` feature (implied by `onnx`) enables the CUDA execution provider for onnxruntime.
 //!
 //! ## LibTorch installation (default `libtorch` feature)
@@ -126,15 +126,23 @@
 //! The CPU version of libtorch will be downloaded by default. To download a CUDA version, please set the environment variable `TORCH_CUDA_VERSION` to `cu124`.
 //! Note that the libtorch library is large (order of several GBs for the CUDA-enabled version) and the first build may therefore take several minutes to complete.
 //!
-//! ## ONNX Support (Optional)
+//! ## ONNX Runtime backend (optional `onnx` feature)
 //!
-//! ONNX support can be enabled via the optional `onnx` feature. This crate then leverages the [ort](https://github.com/pykeio/ort) crate (2.0) with bindings to the onnxruntime C++ library. We refer the user to this page project for further installation instructions/support.
+//! The `onnx` feature runs inference on models exported to ONNX through the [ort](https://github.com/pykeio/ort) crate (2.0, requiring onnxruntime >= 1.17) with bindings to the onnxruntime C++ library.
 //! The `onnx` feature can be used standalone (with `default-features = false`) to run every pipeline without LibTorch, or alongside the default `libtorch` feature.
-//! 1. Enable the optional `onnx` feature. The `rust-bert` crate does not include any optional dependencies for `ort`, the end user should select the set of features that would be adequate for pulling the required `onnxruntime` C++ library.
-//! 2. The current recommended installation is to use dynamic linking by pointing to an existing library location. Use the `load-dynamic` cargo feature for `ort`.
-//! 3. set the `ORT_DYLIB_PATH` to point to the location of downloaded onnxruntime library (`onnxruntime.dll`/`libonnxruntime.so`/`libonnxruntime.dylib` depending on the operating system). These can be downloaded from the [release page](https://github.com/microsoft/onnxruntime/releases) of the onnxruntime project
 //!
-//! Most architectures (including encoders, decoders and encoder-decoders) are supported. the library aims at keeping compatibility with models exported using the [optimum](https://github.com/huggingface/optimum) library. A detailed guide on how to export a Transformer model to ONNX using optimum is available at <https://huggingface.co/docs/optimum/main/en/exporters/onnx/usage_guides/export_a_model>
+//! ### Manual installation (recommended)
+//!
+//! 1. Download an onnxruntime release (>= 1.17) for your platform from the [release page](https://github.com/microsoft/onnxruntime/releases) of the onnxruntime project.
+//! 2. Extract the library to a location of your choice.
+//! 3. Enable the `onnx` feature and add an explicit `ort` dependency with the `load-dynamic` feature, matching the version used by `rust-bert`.
+//! 4. Set the `ORT_DYLIB_PATH` environment variable to the location of the extracted onnxruntime library (`onnxruntime.dll`/`libonnxruntime.so`/`libonnxruntime.dylib` depending on the operating system).
+//!
+//! ### Automatic installation
+//!
+//! Alternatively, the `onnx` feature alone is sufficient: `rust-bert` enables ort's `download-binaries` feature, and prebuilt onnxruntime binaries are downloaded and linked automatically at build time.
+//!
+//! Most architectures (including encoders, decoders and encoder-decoders) are supported. The library aims at keeping compatibility with models exported using the [Optimum](https://github.com/huggingface/optimum) library. A detailed guide on how to export a Transformer model to ONNX using Optimum is available at <https://huggingface.co/docs/optimum/main/en/exporters/onnx/usage_guides/export_a_model>
 //! The resources used to create ONNX models are similar to those based on Pytorch, replacing the pytorch by the ONNX model. Since ONNX models are less flexible than their Pytorch counterparts in the handling of optional arguments, exporting a decoder or encoder-decoder model to ONNX will usually result in multiple files. These files are expected (but not all are necessary) for use in this library as per the table below:
 //!
 //! | Architecture                | Encoder file  | Decoder without past file | Decoder with past file  |
@@ -146,10 +154,10 @@
 //! Note that the computational efficiency will drop when the `decoder with past` file is optional but not provided
 //! since the model will not used cached past keys and values for the attention mechanism, leading to a high number of
 //! redundant computations. The Optimum library offers export options to ensure such a `decoder with past` model file is created.
-//! he base encoder and decoder model architecture are available (and exposed for convenience) in the `encoder` and `decoder` modules, respectively.
+//! The base encoder and decoder model architecture are available (and exposed for convenience) in the `encoder` and `decoder` modules, respectively.
 //!
 //! Generation models (pure decoder or encoder/decoder architectures) are available in the `models` module.
-//! ost pipelines are available for ONNX model checkpoints, including sequence classification, zero-shot classification,
+//! Most pipelines are available for ONNX model checkpoints, including sequence classification, zero-shot classification,
 //! token classification (including named entity recognition and part-of-speech tagging), question answering, text generation, summarization and translation.
 //! These models use the same configuration and tokenizer files as their Pytorch counterparts when used in a pipeline. Examples leveraging ONNX models are given in the `./examples` directory. More information on these can be found in the [`onnx` module](./pipelines/onnx/index.html)
 //!

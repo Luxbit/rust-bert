@@ -9,18 +9,14 @@ Rust-native state-of-the-art Natural Language Processing models and pipelines.
 Port of Hugging Face's
 [Transformers library](https://github.com/huggingface/transformers), with
 pre-processing from [rust-tokenizers](https://github.com/guillaume-be/rust-tokenizers).
-Every pipeline can run on either of two interchangeable inference backends,
-selected at compile time with cargo features:
-
-- **LibTorch** via the [tch](https://github.com/LaurentMazare/tch-rs) crate
-  (the default backend): runs PyTorch weight files (`.pt`) directly.
-- **ONNX Runtime** via the [ort](https://github.com/pykeio/ort) crate: runs
-  ONNX-exported models, with no LibTorch dependency at all when used on its
-  own.
-
-Both backends support multi-threaded tokenization and GPU inference. This
-repository exposes the model base architecture, task-specific heads (see below)
-and [ready-to-use pipelines](#ready-to-use-pipelines).
+Every pipeline runs on either of two interchangeable inference backends selected
+at compile time — **LibTorch** (via [tch](https://github.com/LaurentMazare/tch-rs),
+the default) or **ONNX Runtime** (via [ort](https://github.com/pykeio/ort), with
+no LibTorch dependency) — both with multi-threaded tokenization and GPU
+inference. See [Choose your inference backend](#choose-your-inference-backend)
+for the trade-offs and dependency configurations. This repository exposes the
+model base architecture, task-specific heads (see below) and
+[ready-to-use pipelines](#ready-to-use-pipelines).
 [Benchmarks](#benchmarks) are available at the end of this document.
 
 Get started with tasks including question answering, named entity recognition,
@@ -92,11 +88,8 @@ The tasks currently supported include:
 
 &nbsp;
 
-The matrix above reflects model and task availability, not the choice of
-inference backend: every pipeline runs on both LibTorch and ONNX Runtime (ONNX
-requires the model to be exported to ONNX, see
-[ONNX Support](#onnx-support-optional); exports are available for most of these
-architectures).
+Every pipeline in the matrix runs on either backend — see
+[Which backend should I pick?](#which-backend-should-i-pick) for the details.
 
 ## Getting started
 
@@ -116,37 +109,53 @@ Notes:
 
 - The `remote` feature (enabled by default) lets pipelines download pretrained
   models from Hugging Face's hub; drop it if you only load local resources.
+  Downloaded models are cached in `~/.cache/.rustbert` (override with the
+  `RUSTBERT_CACHE` environment variable) and are in the order of 100s of MBs to
+  GBs.
 - With `default-features = false`, add a TLS feature for remote downloads:
   `default-tls` (default) or `rustls-tls`.
 - `features = ["cuda"]` implies `onnx` and enables the onnxruntime CUDA
   execution provider. For LibTorch, GPU placement is selected through the
   device in the pipeline configuration.
-- Model file formats differ: the `libtorch` feature loads PyTorch weight files
-  (`.pt`), while the `onnx` feature loads ONNX exports (see
-  [ONNX Support](#onnx-support-optional)). Every pipeline is available with the
-  ONNX backend only, allowing to build and run this crate without any LibTorch
-  dependency. Ready-to-run examples are available in the `./examples` directory
-  (`onnx-question-answering`, `onnx-text-generation`, `onnx-translation`, ...).
+
+### Which backend should I pick?
+
+For most applications the ONNX-only build is the better starting point: every
+pipeline works on it and it avoids the LibTorch dependency entirely, with
+models loaded as ONNX exports (ready-to-run examples in the `./examples`
+directory: `onnx-question-answering`, `onnx-text-generation`,
+`onnx-translation`, ...). The combined build (`libtorch` + `onnx`) is worth
+enabling when any of the following applies:
+
+- **Per-model backend choice.** The backend is selected per model instance
+  (`ModelResource::Torch(...)` or `ModelResource::ONNX(...)` in the pipeline
+  configuration), not per binary. With both features enabled, a single
+  application can run some models from PyTorch weights and others from ONNX
+  exports side by side.
+- **Arbitrary PyTorch checkpoints.** The `libtorch` backend loads any converted
+  `.pt` weights (see [Loading pretrained and custom model
+  weights](#loading-pretrained-and-custom-model-weights)), while ONNX requires
+  the model to have been exported first. Compatible exports are not available
+  for every architecture — e.g. DialoGPT, XLNet, Reformer and ProphetNet have
+  no widely available Optimum exports. The pipelines' built-in default
+  resources also point at PyTorch checkpoints; ONNX checkpoints must be
+  provided explicitly (hub URLs or local paths).
+- **Torch-only capabilities.** `output_attentions` / `output_hidden_states`,
+  custom heads built on top of the base models, and weight manipulation through
+  the `VarStore` are LibTorch-only — ONNX is inference-only by nature.
 
 The rest of this section covers the LibTorch installation; ONNX Runtime setup
-is described in the [ONNX Support](#onnx-support-optional) section below.
+is described in the [ONNX Runtime backend](#onnx-runtime-backend-optional-onnx-feature) section below.
 
 ### LibTorch installation (default `libtorch` feature)
 
 With the `libtorch` feature, this library relies on the
 [tch](https://github.com/LaurentMazare/tch-rs) crate for bindings to the C++
-Libtorch API. The libtorch library can be downloaded either automatically or
-manually. The following provides a reference on how to set-up your environment
-to use these bindings, please refer to the
-[tch](https://github.com/LaurentMazare/tch-rs) for detailed information or
-support.
+Libtorch API; please refer to the
+[tch](https://github.com/LaurentMazare/tch-rs) repository for detailed
+information or support.
 
-Furthermore, this library relies on a cache folder for downloading pre-trained
-models. This cache location defaults to `~/.cache/.rustbert`, but can be changed
-by setting the `RUSTBERT_CACHE` environment variable. Note that the language
-models used by this library are in the order of the 100s of MBs to GBs.
-
-### Manual installation (recommended)
+#### Manual installation (recommended)
 
 1. Download `libtorch` from https://pytorch.org/get-started/locally/. This
    package requires `v2.4`: if this version is no longer available on the "get
@@ -175,7 +184,7 @@ $Env:LIBTORCH = "X:\path\to\libtorch"
 $Env:Path += ";X:\path\to\libtorch\lib"
 ```
 
-#### macOS + Homebrew
+##### macOS + Homebrew
 
 ```bash
 brew install pytorch jq
@@ -183,7 +192,7 @@ export LIBTORCH=$(brew --cellar pytorch)/$(brew info --json pytorch | jq -r '.[0
 export LD_LIBRARY_PATH=${LIBTORCH}/lib:$LD_LIBRARY_PATH
 ```
 
-### Automatic installation
+#### Automatic installation
 
 Alternatively, you can let the `build` script automatically download the
 `libtorch` library for you. The `download-libtorch` feature flag needs to be
@@ -193,7 +202,7 @@ a CUDA version, please set the environment variable `TORCH_CUDA_VERSION` to
 CUDA-enabled version) and the first build may therefore take several minutes to
 complete.
 
-### Verifying installation
+#### Verifying installation
 
 Verify your installation (and linking with libtorch) by adding the `rust-bert`
 dependency to your `Cargo.toml` or by cloning the rust-bert source and running
@@ -205,30 +214,73 @@ cd rust-bert
 cargo run --example sentence_embeddings
 ```
 
-## ONNX Support (Optional)
+## ONNX Runtime backend (optional `onnx` feature)
 
-The ONNX backend can be enabled via the optional `onnx` feature. This crate
-then leverages the [ort](https://github.com/pykeio/ort) crate (2.0, requiring
-onnxruntime >= 1.17) with bindings to the onnxruntime C++ library. We refer the
-user to the ort project page for further installation instructions/support.
-The `onnx` feature can be used standalone (with `default-features = false`) to
-run every pipeline without LibTorch, or alongside the default `libtorch`
-feature when both backends are needed in the same binary.
+The `onnx` feature runs inference on models exported to ONNX through the
+[ort](https://github.com/pykeio/ort) crate (2.0, requiring onnxruntime >= 1.17)
+with bindings to the onnxruntime C++ library; we refer the user to the ort
+project page for further installation instructions/support.
 
-1. Enable the optional `onnx` feature. The `rust-bert` crate does not include
-   any optional dependencies for `ort`, the end user should select the set of
-   features that would be adequate for pulling the required `onnxruntime` C++
-   library.
-2. The current recommended installation is to use dynamic linking by pointing to
-   an existing library location. Use the `load-dynamic` cargo feature for `ort`.
-3. set the `ORT_DYLIB_PATH` to point to the location of downloaded onnxruntime
-   library (`onnxruntime.dll`/`libonnxruntime.so`/`libonnxruntime.dylib`
-   depending on the operating system). These can be downloaded from the
-   [release page](https://github.com/microsoft/onnxruntime/releases) of the
-   onnxruntime project
+### Manual installation (recommended)
+
+1. Download an onnxruntime release (>= 1.17) for your platform from the
+   [onnxruntime release page](https://github.com/microsoft/onnxruntime/releases)
+   — for example `onnxruntime-linux-x64-1.20.1.tgz`,
+   `onnxruntime-osx-arm64-1.20.1.tgz` or `onnxruntime-win-x64-1.20.1.zip`.
+2. Extract the library to a location of your choice.
+3. Enable the `onnx` feature and add an explicit `ort` dependency with the
+   `load-dynamic` feature, matching the version used by `rust-bert`:
+
+   ```toml
+   rust-bert = { version = "0.25.0", default-features = false, features = ["onnx", "remote"] }
+   ort = { version = "=2.0.0-rc.13", default-features = false, features = ["load-dynamic"] }
+   ```
+4. Set the `ORT_DYLIB_PATH` environment variable to the location of the
+   extracted shared library (`libonnxruntime.so` / `libonnxruntime.dylib` /
+   `onnxruntime.dll` depending on the operating system):
+
+##### Linux:
+
+```bash
+export ORT_DYLIB_PATH=/path/to/onnxruntime/lib/libonnxruntime.so
+```
+
+##### macOS:
+
+```bash
+export ORT_DYLIB_PATH=/path/to/onnxruntime/lib/libonnxruntime.dylib
+```
+
+##### Windows
+
+```powershell
+$Env:ORT_DYLIB_PATH = "X:\path\to\onnxruntime\lib\onnxruntime.dll"
+```
+
+### Automatic installation
+
+Alternatively, the `onnx` feature alone is sufficient: `rust-bert` enables
+ort's `download-binaries` feature, and prebuilt onnxruntime binaries are
+downloaded and linked automatically at build time. No environment variable is
+required in this configuration, but the build will fetch the onnxruntime
+library from the network on first compile.
+
+### Verifying installation
+
+Verify your installation (and linking with onnxruntime) by cloning the
+rust-bert source and running an ONNX example:
+
+```bash
+git clone git@github.com:guillaume-be/rust-bert.git
+cd rust-bert
+export ORT_DYLIB_PATH=/path/to/onnxruntime/lib/libonnxruntime.so  # manual installation only
+cargo run --features onnx --example onnx-question-answering
+```
+
+### Exporting models to ONNX
 
 Most architectures (including encoders, decoders and encoder-decoders) are
-supported. the library aims at keeping compatibility with models exported using
+supported. The library aims at keeping compatibility with models exported using
 the [Optimum](https://github.com/huggingface/optimum) library. A detailed guide
 on how to export a Transformer model to ONNX using Optimum is available at
 https://huggingface.co/docs/optimum/main/en/exporters/onnx/usage_guides/export_a_model
@@ -276,22 +328,8 @@ herein.
 <summary> <b>1. Question Answering</b> </summary>
 
 Extractive question answering from a given question and context. DistilBERT
-model fine-tuned on SQuAD (Stanford Question Answering Dataset)
-
-```rust
-    let qa_model = QuestionAnsweringModel::new(Default::default ()) ?;
-
-let question = String::from("Where does Amy live ?");
-let context = String::from("Amy lives in Amsterdam");
-
-let answers = qa_model.predict( & [QaInput { question, context }], 1, 32);
-```
-
-Output:
-
-```
-[Answer { score: 0.9976, start: 13, end: 21, answer: "Amsterdam" }]
-```
+model fine-tuned on SQuAD (Stanford Question Answering Dataset) — see the
+complete example at the top of this README.
 
 </details>
 &nbsp;
