@@ -14,7 +14,7 @@ use std::borrow::Borrow;
 
 use serde::{Deserialize, Serialize};
 use tch::nn::{embedding, LinearConfig};
-use tch::{nn, Device, Tensor};
+use tch::{nn, Tensor};
 
 use crate::pipelines::common::{ModelType, TokenizerOption};
 use crate::pipelines::generation_utils::private_generation_utils::{
@@ -859,9 +859,9 @@ impl PrivateLanguageGenerator for T5Generator {
         let (
             input_ids,
             attention_mask,
-            token_type_ids,
-            position_ids,
-            input_embeds,
+            _token_type_ids,
+            _position_ids,
+            _input_embeds,
             encoder_outputs,
             decoder_input_ids,
         ) = (
@@ -980,7 +980,7 @@ impl PrivateLanguageGenerator for T5Generator {
         #[cfg(feature = "libtorch")]
         let beam_indices = Tensor::from_slice(beam_indices);
         #[cfg(feature = "libtorch")]
-        let encoder_outputs_tensor = encoder_outputs.clone().map(|output| {
+        let _encoder_outputs_tensor = encoder_outputs.clone().map(|output| {
             crate::common::tensor_conversion::array_to_tensor_f32(&output)
                 .expect("Error converting encoder output")
         });

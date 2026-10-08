@@ -44,9 +44,9 @@
 //! ```
 
 use crate::common::error::RustBertError;
-use crate::pipelines::common::{
-    get_device, ConfigOption, ModelResource, ModelType, TokenizerOption,
-};
+#[cfg(feature = "libtorch")]
+use crate::pipelines::common::ConfigOption;
+use crate::pipelines::common::{ModelResource, ModelType, TokenizerOption};
 use crate::resources::ResourceProvider;
 use rust_tokenizers::{Offset, TokenIdsWithOffsets, TokenizedInput};
 use serde::{Deserialize, Serialize};
@@ -62,13 +62,14 @@ use crate::pipelines::onnx::{config::ONNXEnvironmentConfig, ONNXEncoder};
 #[cfg(feature = "libtorch")]
 use tch::nn::VarStore;
 #[cfg(feature = "libtorch")]
-use tch::{no_grad, Kind, Tensor};
+use tch::Kind;
 
-#[cfg(all(feature = "remote", feature = "libtorch"))]
-use crate::{
-    distilbert::{DistilBertConfigResources, DistilBertModelResources, DistilBertVocabResources},
-    resources::RemoteResource,
+#[cfg(feature = "remote")]
+use crate::distilbert::{
+    DistilBertConfigResources, DistilBertModelResources, DistilBertVocabResources,
 };
+#[cfg(feature = "remote")]
+use crate::resources::RemoteResource;
 
 #[cfg(feature = "libtorch")]
 mod torch_models {
@@ -269,7 +270,7 @@ impl QuestionAnsweringConfig {
     }
 }
 
-#[cfg(all(feature = "remote", feature = "libtorch"))]
+#[cfg(feature = "remote")]
 impl Default for QuestionAnsweringConfig {
     fn default() -> QuestionAnsweringConfig {
         QuestionAnsweringConfig {
@@ -570,17 +571,22 @@ impl QuestionAnsweringOption {
         _token_type_ids: Option<&ArrayD<i64>>,
         train: bool,
     ) -> (ArrayD<f32>, ArrayD<f32>) {
+        let _ = train;
         #[cfg(feature = "libtorch")]
         {
-            use crate::common::tensor_conversion::{tensor_to_array_f32, tensor_to_array_i64};
+            use crate::common::tensor_conversion::tensor_to_array_f32;
             use crate::pipelines::common::{to_tensor_f32, to_tensor_i64};
+            #[cfg_attr(not(feature = "onnx"), allow(unused_variables))]
             let input_ids_array = input_ids;
+            #[cfg_attr(not(feature = "onnx"), allow(unused_variables))]
             let mask_array = mask;
+            #[cfg_attr(not(feature = "onnx"), allow(unused_variables))]
             let token_type_ids_array = _token_type_ids;
+            #[cfg_attr(not(feature = "onnx"), allow(unused_variables))]
             let input_embeds_array = input_embeds;
             let input_ids = to_tensor_i64(input_ids);
             let mask = to_tensor_i64(mask);
-            let token_type_ids = to_tensor_i64(_token_type_ids);
+            let _token_type_ids = to_tensor_i64(_token_type_ids);
             let input_embeds = to_tensor_f32(input_embeds);
             match *self {
                 Self::Bert(ref model) => {
@@ -786,6 +792,7 @@ impl QuestionAnsweringOption {
                         .expect("Error in ONNX forward pass.");
                     (outputs.start_logits.unwrap(), outputs.end_logits.unwrap())
                 }
+                #[cfg(not(feature = "onnx"))]
                 _ => unreachable!("no inference backend available"),
             }
         }
@@ -802,7 +809,6 @@ pub struct QuestionAnsweringModel {
     max_query_length: usize,
     max_answer_len: usize,
     qa_model: QuestionAnsweringOption,
-    device: Device,
 }
 
 impl QuestionAnsweringModel {
@@ -895,10 +901,6 @@ impl QuestionAnsweringModel {
                 question_answering_config.doc_stride
             )));
         }
-        let device = get_device(
-            question_answering_config.model_resource,
-            question_answering_config.device,
-        );
         Ok(QuestionAnsweringModel {
             tokenizer,
             pad_idx,
@@ -908,7 +910,6 @@ impl QuestionAnsweringModel {
             max_query_length: question_answering_config.max_query_length,
             max_answer_len: question_answering_config.max_answer_length,
             qa_model,
-            device,
         })
     }
 
@@ -1087,10 +1088,10 @@ impl QuestionAnsweringModel {
         // Outer product of start and end probabilities, keeping only spans with
         // length <= max_answer_len (equivalent to triu(0).tril(max_answer_len - 1))
         let mut candidates: Vec<(f32, usize)> = Vec::with_capacity(start_dim * end_dim);
-        for i in 0..start_dim {
+        for (i, &start_value) in start.iter().enumerate() {
             let max_end = min(end_dim, i + self.max_answer_len);
-            for j in i..max_end {
-                candidates.push((start[i] * end[j], i * end_dim + j));
+            for (j, &end_value) in end.iter().enumerate().take(max_end).skip(i) {
+                candidates.push((start_value * end_value, i * end_dim + j));
             }
         }
         candidates.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));

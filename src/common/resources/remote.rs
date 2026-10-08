@@ -107,7 +107,7 @@ impl ResourceProvider for RemoteResource {
     /// let config_resource = RemoteResource::new("http://config_json_location", "configs");
     /// let config_path = config_resource.get_resource();
     /// ```
-    fn get_resource(&self) -> Result<Resource, RustBertError> {
+    fn get_resource(&self) -> Result<Resource<'_>, RustBertError> {
         Ok(Resource::PathBuf(self.get_local_path()?))
     }
 }

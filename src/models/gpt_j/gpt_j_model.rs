@@ -30,7 +30,7 @@ use crate::{Config, RustBertError};
 use ndarray::ArrayD;
 use serde::{Deserialize, Serialize};
 use std::borrow::{Borrow, BorrowMut};
-use std::cmp::{max, min};
+use std::cmp::max;
 use tch::nn::{embedding, Linear};
 use tch::{nn, Device, Tensor};
 
@@ -609,7 +609,7 @@ impl GptJGenerator {
         let device: tch::Device = generate_config.device.into();
 
         generate_config.validate();
-        let mut var_store = nn::VarStore::new(device.into());
+        let mut var_store = nn::VarStore::new(device);
 
         let config = GptJConfig::from_file(config_path);
         let model = GptJLMHeadModel::new(var_store.root(), &config);
@@ -620,7 +620,7 @@ impl GptJGenerator {
             &generate_config.model_resource,
             &mut var_store,
             generate_config.kind,
-            device.into(),
+            device,
         )?;
         if device != Device::Cpu {
             var_store.set_device(device);
@@ -709,8 +709,8 @@ impl PrivateLanguageGenerator for GptJGenerator {
             token_type_ids,
             position_ids,
             input_embeds,
-            encoder_outputs,
-            decoder_input_ids,
+            _encoder_outputs,
+            _decoder_input_ids,
         ) = (
             option_array2_to_tensor(input_ids),
             option_array2_to_tensor(attention_mask),
@@ -822,7 +822,7 @@ impl PrivateLanguageGenerator for GptJGenerator {
         #[cfg(feature = "libtorch")]
         let beam_indices = Tensor::from_slice(beam_indices);
         #[cfg(feature = "libtorch")]
-        let encoder_outputs_tensor = _encoder_outputs.map(|output| {
+        let _encoder_outputs_tensor = _encoder_outputs.map(|output| {
             crate::common::tensor_conversion::array_to_tensor_f32(&output)
                 .expect("Error converting encoder output")
         });

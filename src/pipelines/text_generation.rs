@@ -506,11 +506,10 @@ impl TextGenerationOption {
         }
     }
 
+    #[cfg_attr(not(feature = "libtorch"), allow(unused_variables))]
     pub fn set_device(&mut self, device: crate::Device) -> Result<(), RustBertError> {
         #[cfg(feature = "libtorch")]
         let device: tch::Device = device.into();
-        #[cfg(not(feature = "libtorch"))]
-        let device = device;
         match self {
             #[cfg(feature = "libtorch")]
             Self::GPT(model_ref) => model_ref.set_device(device),

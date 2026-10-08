@@ -25,11 +25,10 @@ use crate::pipelines::generation_utils::{
     Cache, GenerateConfig, GeneratedLogits, LanguageGenerator,
 };
 use crate::{Config, RustBertError};
-use ndarray::ArrayD;
 use std::borrow::{Borrow, BorrowMut};
 use tch::kind::Kind::Int64;
 use tch::nn::embedding;
-use tch::{nn, Device, Tensor};
+use tch::{nn, Tensor};
 
 /// # GPT Pretrained model weight files
 pub struct OpenAiGptModelResources;
@@ -507,7 +506,7 @@ impl OpenAIGenerator {
             &generate_config.model_resource,
             &mut var_store,
             generate_config.kind,
-            device.into(),
+            device,
         )?;
 
         let bos_token_id = tokenizer.get_bos_id();

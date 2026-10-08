@@ -57,7 +57,7 @@ fn test_generation_reformer() -> anyhow::Result<()> {
         no_repeat_ngram_size: 3,
         num_beams: 3,
         num_return_sequences: 1,
-        device: Device::Cpu,
+        device: rust_bert::Device::Cpu,
         ..Default::default()
     };
 

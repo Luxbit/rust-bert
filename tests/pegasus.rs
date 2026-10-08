@@ -4,7 +4,6 @@ use rust_bert::pipelines::summarization::{SummarizationConfig, SummarizationMode
 use rust_bert::pegasus::{PegasusConfigResources, PegasusModelResources, PegasusVocabResources};
 use rust_bert::pipelines::common::{ModelResource, ModelType};
 use rust_bert::resources::RemoteResource;
-use tch::Device;
 
 #[test]
 fn pegasus_summarization_greedy() -> anyhow::Result<()> {
@@ -27,7 +26,7 @@ fn pegasus_summarization_greedy() -> anyhow::Result<()> {
         merges_resource: None,
         num_beams: 4,
         no_repeat_ngram_size: 3,
-        device: Device::cuda_if_available(),
+        device: rust_bert::Device::cuda_if_available(),
         ..Default::default()
     };
     let summarization_model = SummarizationModel::new(summarization_config)?;

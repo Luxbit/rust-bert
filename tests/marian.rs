@@ -8,7 +8,6 @@ use rust_bert::pipelines::translation::{
     Language, TranslationConfig, TranslationModel, TranslationModelBuilder,
 };
 use rust_bert::resources::RemoteResource;
-use tch::Device;
 
 #[test]
 // #[cfg_attr(not(feature = "all-tests"), ignore)]
@@ -30,7 +29,7 @@ fn test_translation() -> anyhow::Result<()> {
         Some(merges_resource),
         source_languages,
         target_languages,
-        Device::cuda_if_available(),
+        rust_bert::Device::cuda_if_available(),
     );
     let model = TranslationModel::new(translation_config)?;
 
@@ -53,7 +52,7 @@ fn test_translation() -> anyhow::Result<()> {
 // #[cfg_attr(not(feature = "all-tests"), ignore)]
 fn test_translation_builder() -> anyhow::Result<()> {
     let model = TranslationModelBuilder::new()
-        .with_device(Device::cuda_if_available())
+        .with_device(rust_bert::Device::cuda_if_available())
         .with_model_type(ModelType::Marian)
         .with_source_languages(vec![Language::English])
         .with_target_languages(vec![Language::French])

@@ -29,7 +29,7 @@ use crate::{Config, RustBertError};
 use ndarray::ArrayD;
 use std::borrow::Borrow;
 use tch::nn::{embedding, EmbeddingConfig, Init};
-use tch::{nn, Device, Tensor};
+use tch::{nn, Tensor};
 
 /// # Pegasus Pretrained model weight files
 pub struct PegasusModelResources;
@@ -600,9 +600,9 @@ impl PrivateLanguageGenerator for PegasusConditionalGenerator {
         let (
             input_ids,
             attention_mask,
-            token_type_ids,
-            position_ids,
-            input_embeds,
+            _token_type_ids,
+            _position_ids,
+            _input_embeds,
             encoder_outputs,
             decoder_input_ids,
         ) = (

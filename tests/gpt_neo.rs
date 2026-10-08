@@ -136,7 +136,7 @@ fn test_generation_gpt_neo() -> anyhow::Result<()> {
         early_stopping: true,
         num_beams: 4,
         num_return_sequences: 1,
-        device: Device::Cpu,
+        device: rust_bert::Device::Cpu,
         ..Default::default()
     };
 

@@ -9,11 +9,10 @@ use rust_bert::pipelines::common::ModelType;
 use rust_bert::pipelines::translation::{Language, TranslationModel, TranslationModelBuilder};
 // use rust_bert::resources::{LocalResource, Resource};
 use std::time::{Duration, Instant};
-use tch::Device;
 
 fn create_translation_model() -> TranslationModel {
     let model = TranslationModelBuilder::new()
-        .with_device(Device::cuda_if_available())
+        .with_device(rust_bert::Device::cuda_if_available())
         .with_model_type(ModelType::Marian)
         // .with_model_type(ModelType::T5)
         .with_source_languages(vec![Language::English])

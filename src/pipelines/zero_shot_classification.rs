@@ -99,7 +99,9 @@
 //! ```
 
 use crate::common::tensor_ops::{argmax_last_dim, softmax_last_dim};
-use crate::pipelines::common::{ConfigOption, ModelResource, ModelType, TokenizerOption};
+#[cfg(feature = "libtorch")]
+use crate::pipelines::common::ConfigOption;
+use crate::pipelines::common::{ModelResource, ModelType, TokenizerOption};
 use crate::pipelines::sequence_classification::Label;
 use crate::resources::ResourceProvider;
 use crate::Device;
@@ -120,7 +122,7 @@ use crate::{
 #[cfg(feature = "libtorch")]
 use tch::nn::VarStore;
 #[cfg(feature = "libtorch")]
-use tch::{no_grad, Kind, Tensor};
+use tch::Kind;
 
 #[cfg(feature = "libtorch")]
 mod torch_models {
@@ -493,14 +495,20 @@ impl ZeroShotClassificationOption {
         input_embeds: Option<&ArrayD<f32>>,
         train: bool,
     ) -> ArrayD<f32> {
+        let _ = train;
         #[cfg(feature = "libtorch")]
         {
             use crate::common::tensor_conversion::tensor_to_array_f32;
             use crate::pipelines::common::{to_tensor_f32, to_tensor_i64};
+            #[cfg_attr(not(feature = "onnx"), allow(unused_variables))]
             let input_ids_array = input_ids;
+            #[cfg_attr(not(feature = "onnx"), allow(unused_variables))]
             let mask_array = mask;
+            #[cfg_attr(not(feature = "onnx"), allow(unused_variables))]
             let token_type_ids_array = token_type_ids;
+            #[cfg_attr(not(feature = "onnx"), allow(unused_variables))]
             let position_ids_array = position_ids;
+            #[cfg_attr(not(feature = "onnx"), allow(unused_variables))]
             let input_embeds_array = input_embeds;
             let input_ids = to_tensor_i64(input_ids);
             let mask = to_tensor_i64(mask);
@@ -669,6 +677,7 @@ impl ZeroShotClassificationOption {
                     .expect("Error in ONNX forward pass.")
                     .logits
                     .unwrap(),
+                #[cfg(not(feature = "onnx"))]
                 _ => unreachable!("no inference backend available"),
             }
         }
@@ -694,11 +703,13 @@ impl ZeroShotClassificationOption {
 /// ```
 pub type ZeroShotTemplate = Box<dyn Fn(&str) -> String>;
 
+/// Tokenized (input ids, attention masks, token type ids) label pairs.
+type TokenizedLabelPairs = (Array2<i64>, Array2<i64>, Array2<i64>);
+
 /// # ZeroShotClassificationModel for Zero Shot Classification
 pub struct ZeroShotClassificationModel {
     tokenizer: TokenizerOption,
     zero_shot_classifier: ZeroShotClassificationOption,
-    device: Device,
 }
 
 impl ZeroShotClassificationModel {
@@ -768,13 +779,11 @@ impl ZeroShotClassificationModel {
         config: ZeroShotClassificationConfig,
         tokenizer: TokenizerOption,
     ) -> Result<ZeroShotClassificationModel, RustBertError> {
-        let device = config.device;
         let zero_shot_classifier = ZeroShotClassificationOption::new(&config)?;
 
         Ok(ZeroShotClassificationModel {
             tokenizer,
             zero_shot_classifier,
-            device,
         })
     }
 
@@ -794,7 +803,7 @@ impl ZeroShotClassificationModel {
         labels: T,
         template: Option<ZeroShotTemplate>,
         max_len: usize,
-    ) -> Result<(Array2<i64>, Array2<i64>, Array2<i64>), RustBertError>
+    ) -> Result<TokenizedLabelPairs, RustBertError>
     where
         S: AsRef<[&'a str]>,
         T: AsRef<[&'a str]>,
@@ -940,7 +949,7 @@ impl ZeroShotClassificationModel {
             false,
         );
         let output = output
-            .into_shape((num_inputs, num_labels, 3))
+            .into_shape_with_order((num_inputs, num_labels, 3))
             .expect("Model output could not be shaped to (inputs, labels, 3)");
 
         // Entailment probability: softmax over the [contradiction, entailment] logits,
@@ -959,7 +968,7 @@ impl ZeroShotClassificationModel {
             let normalized = softmax_last_dim(&Array1::from(label_scores).into_dyn());
             entailment
                 .row_mut(sentence_idx)
-                .assign(&Array1::from(normalized.into_raw_vec()));
+                .assign(&Array1::from_iter(normalized.iter().cloned()));
         }
 
         let label_indices = argmax_last_dim(&entailment.clone().into_dyn());
@@ -1096,7 +1105,7 @@ impl ZeroShotClassificationModel {
             false,
         );
         let output = output
-            .into_shape((num_inputs, num_labels, 3))
+            .into_shape_with_order((num_inputs, num_labels, 3))
             .expect("Model output could not be shaped to (inputs, labels, 3)");
 
         // Entailment probability from the [contradiction, entailment] logit pair.
@@ -1132,6 +1141,7 @@ impl ZeroShotClassificationModel {
     }
 }
 #[cfg(test)]
+#[cfg(feature = "libtorch")]
 mod test {
     use super::*;
 

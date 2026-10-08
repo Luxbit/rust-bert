@@ -148,7 +148,7 @@ fn gpt2_generation_beam_search() -> anyhow::Result<()> {
         do_sample: false,
         num_beams: 5,
         temperature: 1.2,
-        device: Device::Cpu,
+        device: rust_bert::Device::Cpu,
         num_return_sequences: 3,
         ..Default::default()
     };
@@ -193,7 +193,7 @@ fn gpt2_generation_beam_search_multiple_prompts_without_padding() -> anyhow::Res
         num_beams: 5,
         temperature: 1.2,
         num_return_sequences: 3,
-        device: Device::Cpu,
+        device: rust_bert::Device::Cpu,
         ..Default::default()
     };
     let model = TextGenerationModel::new(generate_config)?;
@@ -353,15 +353,11 @@ fn gpt2_prefix_allowed_token_greedy() -> anyhow::Result<()> {
     let merges_resource = Box::new(RemoteResource::from_pretrained(Gpt2MergesResources::GPT2));
     let model_resource = Box::new(RemoteResource::from_pretrained(Gpt2ModelResources::GPT2));
 
-    fn force_one_paragraph(_batch_id: i64, previous_token_ids: &Tensor) -> Vec<i64> {
+    fn force_one_paragraph(_batch_id: i64, previous_token_ids: &[i64]) -> Vec<i64> {
         let paragraph_tokens = [198, 628];
 
         for paragraph_token in paragraph_tokens.iter() {
-            if previous_token_ids
-                .iter::<i64>()
-                .unwrap()
-                .any(|x| x == *paragraph_token)
-            {
+            if previous_token_ids.contains(paragraph_token) {
                 return vec![50256];
             }
         }
@@ -376,7 +372,7 @@ fn gpt2_prefix_allowed_token_greedy() -> anyhow::Result<()> {
         merges_resource: Some(merges_resource),
         do_sample: false,
         num_beams: 1,
-        device: Device::Cpu,
+        device: rust_bert::Device::Cpu,
         ..Default::default()
     };
     let model = GPT2Generator::new(generate_config)?;
@@ -426,7 +422,7 @@ fn gpt2_bad_tokens_greedy() -> anyhow::Result<()> {
         merges_resource: Some(merges_resource),
         do_sample: false,
         num_beams: 1,
-        device: Device::Cpu,
+        device: rust_bert::Device::Cpu,
         ..Default::default()
     };
     let model = GPT2Generator::new(generate_config)?;
@@ -493,7 +489,7 @@ fn gpt2_bad_tokens_beam_search() -> anyhow::Result<()> {
         merges_resource: Some(merges_resource),
         do_sample: false,
         num_beams: 3,
-        device: Device::Cpu,
+        device: rust_bert::Device::Cpu,
         ..Default::default()
     };
     let model = GPT2Generator::new(generate_config)?;
@@ -552,15 +548,11 @@ fn gpt2_prefix_allowed_token_beam_search() -> anyhow::Result<()> {
     let merges_resource = Box::new(RemoteResource::from_pretrained(Gpt2MergesResources::GPT2));
     let model_resource = Box::new(RemoteResource::from_pretrained(Gpt2ModelResources::GPT2));
 
-    fn force_one_paragraph(_batch_id: i64, previous_token_ids: &Tensor) -> Vec<i64> {
+    fn force_one_paragraph(_batch_id: i64, previous_token_ids: &[i64]) -> Vec<i64> {
         let paragraph_tokens = [198, 628];
 
         for paragraph_token in paragraph_tokens.iter() {
-            if previous_token_ids
-                .iter::<i64>()
-                .unwrap()
-                .any(|x| x == *paragraph_token)
-            {
+            if previous_token_ids.contains(paragraph_token) {
                 return vec![50256];
             }
         }
@@ -575,7 +567,7 @@ fn gpt2_prefix_allowed_token_beam_search() -> anyhow::Result<()> {
         merges_resource: Some(merges_resource),
         do_sample: false,
         num_beams: 3,
-        device: Device::Cpu,
+        device: rust_bert::Device::Cpu,
         ..Default::default()
     };
     let model = GPT2Generator::new(generate_config)?;
@@ -625,7 +617,7 @@ fn gpt2_greedy_token_scores() -> anyhow::Result<()> {
         merges_resource: Some(merges_resource),
         do_sample: false,
         num_beams: 1,
-        device: Device::Cpu,
+        device: rust_bert::Device::Cpu,
         ..Default::default()
     };
     let model = GPT2Generator::new(generate_config)?;
@@ -681,7 +673,7 @@ fn gpt2_beam_search_token_scores() -> anyhow::Result<()> {
         merges_resource: Some(merges_resource),
         do_sample: false,
         num_beams: 2,
-        device: Device::Cpu,
+        device: rust_bert::Device::Cpu,
         ..Default::default()
     };
     let model = GPT2Generator::new(generate_config)?;
@@ -727,7 +719,7 @@ fn dialogpt_single_multi_turn_conversation() -> anyhow::Result<()> {
     //    Set-up conversation model
     let conversation_config = ConversationConfig {
         do_sample: false,
-        device: Device::Cpu,
+        device: rust_bert::Device::Cpu,
         ..Default::default()
     };
     let conversation_model = ConversationModel::new(conversation_config)?;
@@ -764,7 +756,7 @@ fn dialogpt_multiple_multi_turn_conversation() -> anyhow::Result<()> {
     //    Set-up conversation model
     let conversation_config = ConversationConfig {
         do_sample: false,
-        device: Device::Cpu,
+        device: rust_bert::Device::Cpu,
         ..Default::default()
     };
     let conversation_model = ConversationModel::new(conversation_config)?;
@@ -808,7 +800,7 @@ fn dialogpt_multiple_multi_turn_conversation_with_truncation() -> anyhow::Result
         max_length: Some(36),
         min_length_for_response: 24,
         do_sample: false,
-        device: Device::Cpu,
+        device: rust_bert::Device::Cpu,
         ..Default::default()
     };
     let conversation_model = ConversationModel::new(conversation_config)?;
@@ -855,7 +847,7 @@ fn dialogpt_multiple_multi_turn_conversation_with_conversation_deletion() -> any
     //    Set-up conversation model
     let conversation_config = ConversationConfig {
         do_sample: false,
-        device: Device::Cpu,
+        device: rust_bert::Device::Cpu,
         ..Default::default()
     };
     let conversation_model = ConversationModel::new(conversation_config)?;

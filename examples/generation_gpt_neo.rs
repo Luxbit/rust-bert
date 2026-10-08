@@ -1,3 +1,4 @@
+#![cfg(feature = "libtorch")]
 // Copyright 2018 Google AI and Google Brain team.
 // Copyright 2018 Carnegie Mellon University Authors.
 // Copyright 2020-present, the HuggingFace Inc. team.
@@ -20,7 +21,6 @@ use rust_bert::gpt_neo::{
 use rust_bert::pipelines::common::{ModelResource, ModelType};
 use rust_bert::pipelines::text_generation::{TextGenerationConfig, TextGenerationModel};
 use rust_bert::resources::RemoteResource;
-use tch::Device;
 
 fn main() -> anyhow::Result<()> {
     //    Set-up model resources
@@ -48,12 +48,12 @@ fn main() -> anyhow::Result<()> {
         early_stopping: true,
         num_beams: 4,
         num_return_sequences: 1,
-        device: Device::Cpu,
+        device: rust_bert::Device::Cpu,
         ..Default::default()
     };
 
     let mut model = TextGenerationModel::new(generate_config)?;
-    model.set_device(Device::cuda_if_available())?;
+    model.set_device(rust_bert::Device::cuda_if_available())?;
 
     let input_context_1 = "It was a very nice and sunny";
     let input_context_2 = "It was a gloom winter night, and";

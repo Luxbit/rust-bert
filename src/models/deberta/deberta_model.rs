@@ -18,8 +18,8 @@ use crate::common::dropout::{Dropout, XDropout};
 use crate::common::embeddings::get_shape_and_device_from_ids_embeddings_pair;
 use crate::common::kind::get_min;
 pub use crate::deberta::config::{
-    deserialize_attention_type, DebertaConfig, DebertaConfigResources, DebertaMergesResources,
-    DebertaModelResources, DebertaVocabResources, PositionAttentionType, PositionAttentionTypes,
+    DebertaConfig, DebertaConfigResources, DebertaMergesResources, DebertaModelResources,
+    DebertaVocabResources, PositionAttentionType, PositionAttentionTypes,
 };
 use crate::deberta::embeddings::DebertaEmbeddings;
 use crate::deberta::encoder::{DebertaEncoder, DebertaEncoderOutput};

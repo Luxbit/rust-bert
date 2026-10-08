@@ -107,11 +107,13 @@ pub fn gather_rows<T: Clone>(array: &ArrayD<T>, indices: &[i64]) -> ArrayD<T> {
 }
 
 /// Create an array of `i64` filled with `value` and the provided shape.
+#[cfg_attr(not(feature = "onnx"), allow(dead_code))]
 pub fn full_i64(shape: &[usize], value: i64) -> ArrayD<i64> {
     ArrayD::from_elem(IxDyn(shape), value)
 }
 
 /// Create an array of `i64` ones with the provided shape.
+#[cfg_attr(not(feature = "onnx"), allow(dead_code))]
 pub fn ones_i64(shape: &[usize]) -> ArrayD<i64> {
     full_i64(shape, 1)
 }

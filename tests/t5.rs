@@ -4,7 +4,6 @@ use rust_bert::pipelines::summarization::{SummarizationConfig, SummarizationMode
 use rust_bert::pipelines::translation::{Language, TranslationConfig, TranslationModel};
 use rust_bert::resources::RemoteResource;
 use rust_bert::t5::{T5ConfigResources, T5ModelResources, T5VocabResources};
-use tch::Device;
 
 #[test]
 fn test_translation_t5() -> anyhow::Result<()> {
@@ -33,7 +32,7 @@ fn test_translation_t5() -> anyhow::Result<()> {
         None,
         source_languages,
         target_languages,
-        Device::cuda_if_available(),
+        rust_bert::Device::cuda_if_available(),
     );
     let model = TranslationModel::new(translation_config)?;
 

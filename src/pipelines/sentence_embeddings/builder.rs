@@ -126,12 +126,11 @@ impl SentenceEmbeddingsBuilder<Local> {
     }
 }
 
-#[cfg(feature = "remote")]
+#[cfg(all(feature = "remote", feature = "libtorch"))]
 pub struct Remote {
     config: SentenceEmbeddingsConfig,
 }
 
-#[cfg(feature = "remote")]
 #[cfg(all(feature = "remote", feature = "libtorch"))]
 impl SentenceEmbeddingsBuilder<Remote> {
     pub fn remote(model_type: SentenceEmbeddingsModelType) -> Self {

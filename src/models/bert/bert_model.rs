@@ -16,12 +16,11 @@ use crate::bert::encoder::{BertEncoder, BertPooler};
 use crate::common::dropout::Dropout;
 use crate::common::embeddings::get_shape_and_device_from_ids_embeddings_pair;
 use crate::common::linear::{linear_no_bias, LinearNoBias};
+use crate::RustBertError;
 use crate::{
     bert::embeddings::{BertEmbedding, BertEmbeddings},
     common::activations::TensorFunction,
 };
-use crate::{Config, RustBertError};
-use serde::{Deserialize, Serialize};
 use std::borrow::Borrow;
 
 use tch::nn::init::DEFAULT_KAIMING_UNIFORM;

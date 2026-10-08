@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use crate::common::dropout::Dropout;
-use crate::common::summary::{SequenceSummary, SummaryConfig, SummaryType};
+use crate::common::summary::{SequenceSummary, SummaryConfig};
 use crate::pipelines::common::{ModelType, TokenizerOption};
 use crate::pipelines::generation_utils::private_generation_utils::{
     PreparedInput, PrivateLanguageGenerator,
@@ -24,12 +24,9 @@ use crate::pipelines::generation_utils::{
     Cache, GenerateConfig, GeneratedLogits, LanguageGenerator,
 };
 use crate::xlnet::attention::LayerState;
-pub use crate::xlnet::config::{
-    AttentionType, XLNetConfig, XLNetConfigResources, XLNetModelResources, XLNetVocabResources,
-};
+pub use crate::xlnet::config::{AttentionType, XLNetConfig};
 use crate::xlnet::encoder::XLNetLayer;
 use crate::{Config, RustBertError};
-use serde::{Deserialize, Serialize};
 use std::borrow::{Borrow, BorrowMut};
 
 use ndarray::ArrayD;
@@ -1437,7 +1434,6 @@ impl XLNetGenerator {
         let device: tch::Device = generate_config.device.into();
 
         generate_config.validate();
-        let device: tch::Device = device.into();
         let mut var_store = nn::VarStore::new(device);
 
         let config = XLNetConfig::from_file(config_path);
@@ -1446,7 +1442,7 @@ impl XLNetGenerator {
             &generate_config.model_resource,
             &mut var_store,
             generate_config.kind,
-            device.into(),
+            device,
         )?;
 
         let bos_token_id = Some(config.bos_token_id);
@@ -1530,10 +1526,10 @@ impl PrivateLanguageGenerator for XLNetGenerator {
         let (
             input_ids,
             attention_mask,
-            token_type_ids,
-            position_ids,
-            input_embeds,
-            encoder_outputs,
+            _token_type_ids,
+            _position_ids,
+            _input_embeds,
+            _encoder_outputs,
             decoder_input_ids,
         ) = (
             option_array2_to_tensor(input_ids),

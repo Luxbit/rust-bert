@@ -2,7 +2,6 @@
 use crate::common::activations::Activation;
 use crate::Config;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 /// # GPT2 Pretrained model weight files
 pub struct Gpt2ModelResources;

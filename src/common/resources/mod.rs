@@ -26,6 +26,7 @@ use crate::common::error::RustBertError;
 pub use buffer::BufferResource;
 pub use local::LocalResource;
 use std::fmt::Debug;
+#[cfg(feature = "libtorch")]
 use std::ops::DerefMut;
 use std::path::PathBuf;
 use std::sync::RwLockWriteGuard;
@@ -71,14 +72,14 @@ pub trait ResourceProvider: Debug + Send + Sync {
     /// ```no_run
     /// use rust_bert::resources::{BufferResource, LocalResource, ResourceProvider};
     /// ```
-    fn get_resource(&self) -> Result<Resource, RustBertError>;
+    fn get_resource(&self) -> Result<Resource<'_>, RustBertError>;
 }
 
 impl<T: ResourceProvider + ?Sized> ResourceProvider for Box<T> {
     fn get_local_path(&self) -> Result<PathBuf, RustBertError> {
         T::get_local_path(self)
     }
-    fn get_resource(&self) -> Result<Resource, RustBertError> {
+    fn get_resource(&self) -> Result<Resource<'_>, RustBertError> {
         T::get_resource(self)
     }
 }

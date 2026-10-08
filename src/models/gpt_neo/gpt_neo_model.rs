@@ -28,8 +28,8 @@ use crate::{Activation, Config, RustBertError};
 use ndarray::ArrayD;
 use serde::{Deserialize, Serialize};
 use std::borrow::{Borrow, BorrowMut};
-use std::cmp::{max, min};
-use tch::{nn, Device, Kind, Tensor};
+use std::cmp::max;
+use tch::{nn, Kind, Tensor};
 
 /// # GPT-Neo Pretrained model weight files
 pub struct GptNeoModelResources;
@@ -412,9 +412,7 @@ impl GptNeoModel {
         let mut x: Option<Tensor> = None;
         let mut attention_weights: Option<Tensor>;
 
-        for ((layer_idx, layer), layer_state) in
-            self.layers.iter().enumerate().zip(old_cache.into_iter())
-        {
+        for ((layer_idx, layer), layer_state) in self.layers.iter().enumerate().zip(old_cache) {
             let temp = if let Some(x_value) = &x {
                 layer.forward_t(
                     x_value,
@@ -676,14 +674,14 @@ impl GptNeoGenerator {
         let device: tch::Device = generate_config.device.into();
 
         generate_config.validate();
-        let mut var_store = nn::VarStore::new(device.into());
+        let mut var_store = nn::VarStore::new(device);
         let config = GptNeoConfig::from_file(config_path);
         let model = GptNeoForCausalLM::new(var_store.root(), &config)?;
         crate::resources::load_weights(
             &generate_config.model_resource,
             &mut var_store,
             generate_config.kind,
-            device.into(),
+            device,
         )?;
 
         let bos_token_id = tokenizer.get_bos_id();
@@ -770,8 +768,8 @@ impl PrivateLanguageGenerator for GptNeoGenerator {
             token_type_ids,
             position_ids,
             input_embeds,
-            encoder_outputs,
-            decoder_input_ids,
+            _encoder_outputs,
+            _decoder_input_ids,
         ) = (
             option_array2_to_tensor(input_ids),
             option_array2_to_tensor(attention_mask),
@@ -883,7 +881,7 @@ impl PrivateLanguageGenerator for GptNeoGenerator {
         #[cfg(feature = "libtorch")]
         let beam_indices = Tensor::from_slice(beam_indices);
         #[cfg(feature = "libtorch")]
-        let encoder_outputs_tensor = _encoder_outputs.map(|output| {
+        let _encoder_outputs_tensor = _encoder_outputs.map(|output| {
             crate::common::tensor_conversion::array_to_tensor_f32(&output)
                 .expect("Error converting encoder output")
         });

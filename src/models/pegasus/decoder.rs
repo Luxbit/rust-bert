@@ -43,14 +43,8 @@ impl PegasusDecoder {
         let output_hidden_states = config.output_hidden_states.unwrap_or(false);
 
         let scale_embedding = match config.scale_embedding {
-            Some(value) => {
-                if value {
-                    (config.d_model as f64).sqrt()
-                } else {
-                    1.0
-                }
-            }
-            None => 1.0,
+            Some(true) => (config.d_model as f64).sqrt(),
+            Some(false) | None => 1.0,
         };
 
         let dropout = Dropout::new(config.dropout);

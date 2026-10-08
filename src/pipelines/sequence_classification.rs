@@ -59,9 +59,7 @@
 //! # ;
 //! ```
 use crate::common::error::RustBertError;
-use crate::pipelines::common::{
-    get_device, ConfigOption, ModelResource, ModelType, TokenizerOption,
-};
+use crate::pipelines::common::{ConfigOption, ModelResource, ModelType, TokenizerOption};
 use crate::resources::ResourceProvider;
 use crate::Device;
 use serde::{Deserialize, Serialize};
@@ -71,19 +69,20 @@ use ndarray::ArrayD;
 
 #[cfg(feature = "libtorch")]
 use crate::common::tensor_conversion::tensor_to_array_f32;
+#[cfg(feature = "remote")]
+use crate::distilbert::{
+    DistilBertConfigResources, DistilBertModelResources, DistilBertVocabResources,
+};
 #[cfg(feature = "libtorch")]
 use crate::pipelines::common::{cast_var_store, to_tensor_f32, to_tensor_i64};
 #[cfg(feature = "onnx")]
 use crate::pipelines::onnx::{config::ONNXEnvironmentConfig, ONNXEncoder};
-#[cfg(all(feature = "remote", feature = "libtorch"))]
-use crate::{
-    distilbert::{DistilBertConfigResources, DistilBertModelResources, DistilBertVocabResources},
-    resources::RemoteResource,
-};
+#[cfg(feature = "remote")]
+use crate::resources::RemoteResource;
 #[cfg(feature = "libtorch")]
 use tch::nn::VarStore;
 #[cfg(feature = "libtorch")]
-use tch::{no_grad, Kind, Tensor};
+use tch::Kind;
 
 #[cfg(feature = "libtorch")]
 mod torch_models {
@@ -182,7 +181,7 @@ impl SequenceClassificationConfig {
     }
 }
 
-#[cfg(all(feature = "remote", feature = "libtorch"))]
+#[cfg(feature = "remote")]
 impl Default for SequenceClassificationConfig {
     /// Provides a defaultSST-2 sentiment analysis model (English)
     fn default() -> SequenceClassificationConfig {
@@ -492,12 +491,18 @@ impl SequenceClassificationOption {
         input_embeds: Option<&ArrayD<f32>>,
         train: bool,
     ) -> ArrayD<f32> {
+        let _ = train;
         #[cfg(feature = "libtorch")]
         {
+            #[cfg_attr(not(feature = "onnx"), allow(unused_variables))]
             let input_ids_array = input_ids;
+            #[cfg_attr(not(feature = "onnx"), allow(unused_variables))]
             let mask_array = mask;
+            #[cfg_attr(not(feature = "onnx"), allow(unused_variables))]
             let token_type_ids_array = token_type_ids;
+            #[cfg_attr(not(feature = "onnx"), allow(unused_variables))]
             let position_ids_array = position_ids;
+            #[cfg_attr(not(feature = "onnx"), allow(unused_variables))]
             let input_embeds_array = input_embeds;
             let input_ids = to_tensor_i64(input_ids);
             let mask = to_tensor_i64(mask);
@@ -703,6 +708,7 @@ impl SequenceClassificationOption {
                         .logits
                         .unwrap()
                 }
+                #[cfg(not(feature = "onnx"))]
                 _ => unreachable!("no inference backend available"),
             }
         }
@@ -714,7 +720,6 @@ pub struct SequenceClassificationModel {
     tokenizer: TokenizerOption,
     sequence_classifier: SequenceClassificationOption,
     label_mapping: HashMap<i64, String>,
-    device: Device,
     max_length: usize,
 }
 
@@ -794,12 +799,10 @@ impl SequenceClassificationModel {
             .map(|v| v as usize)
             .unwrap_or(usize::MAX);
         let label_mapping = model_config.get_label_mapping().clone();
-        let device = get_device(config.model_resource, config.device);
         Ok(SequenceClassificationModel {
             tokenizer,
             sequence_classifier,
             label_mapping,
-            device,
             max_length,
         })
     }

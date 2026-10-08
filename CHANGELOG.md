@@ -5,6 +5,43 @@ on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-10-08
+
+### Added
+
+- The `tch` (LibTorch) dependency is now optional behind the `libtorch` feature (enabled by
+  default). The crate can be built and used with the ONNX Runtime backend only via
+  `default-features = false, features = ["onnx"]`: every pipeline (sequence and token
+  classification, question answering, zero-shot classification, sentiment analysis, NER,
+  POS tagging, masked language model, text generation, conversation, summarization,
+  translation, sentence embeddings and keywords extraction) is available without LibTorch.
+- Addition of a `cuda` feature enabling the CUDA execution provider for onnxruntime
+  (`ort/cuda`).
+- A compile-time error is now raised when no inference backend (`libtorch` or `onnx`) is
+  enabled.
+- Addition of a backend-neutral `rust_bert::Device` enum used by all pipeline and model
+  configurations.
+
+### Changed
+
+- (BREAKING) Upgraded the ONNX backend to `ort` 2.0 (`2.0.0-rc.13`, requiring onnxruntime
+  >= 1.17).
+- (BREAKING) The text generation driver (greedy/beam search, sampling, repetition
+  penalties, ...) is now implemented on top of `ndarray` and shared by both backends.
+  Signatures that previously exposed `tch::Tensor` now use `ndarray` types: e.g.
+  `generate_from_ids_and_past` takes `Array2<i64>` inputs, sentence embeddings expose
+  `encode_arrays`/`tokenize_arrays`, and `PrefixAllowedFunction` is now
+  `&dyn Fn(i64, &[i64]) -> Vec<i64>`. `LanguageGenerator` implementations now return
+  backend-neutral `GeneratedLogits`/`LMLogitsWithoutLoss` outputs; the `Tensor`-based
+  `LMModelOutput` remains available under the `libtorch` feature.
+- (BREAKING) Model configurations exposing a `kind` (weight precision) field are only
+  available under the `libtorch` feature.
+- Configuration structures and resources presets were extracted to dedicated `config.rs`
+  modules, available without LibTorch, for all architectures usable with ONNX.
+- Pipeline modules and their default model presets are no longer compiled out when the
+  `libtorch` feature is disabled; torch-only architectures (BART, Marian, T5, ...)
+  remain behind the `libtorch` feature.
+
 ## [0.23.0] - 2024-01-20
 
 ## Changed

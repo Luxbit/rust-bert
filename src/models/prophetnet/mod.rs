@@ -21,7 +21,7 @@
 //!     ProphetNetConfigResources, ProphetNetModelResources, ProphetNetVocabResources,
 //! };
 //! use rust_bert::resources::RemoteResource;
-//! use tch::Device;
+//! use rust_bert::Device;
 //!
 //! fn main() -> anyhow::Result<()> {
 //!     use rust_bert::pipelines::common::ModelResource;

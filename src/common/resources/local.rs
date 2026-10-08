@@ -46,7 +46,7 @@ impl ResourceProvider for LocalResource {
     /// };
     /// let config_path = config_resource.get_resource();
     /// ```
-    fn get_resource(&self) -> Result<Resource, RustBertError> {
+    fn get_resource(&self) -> Result<Resource<'_>, RustBertError> {
         Ok(Resource::PathBuf(self.local_path.clone()))
     }
 }

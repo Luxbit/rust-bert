@@ -14,7 +14,7 @@ use std::borrow::Borrow;
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
-use tch::{nn, Device, Kind, Tensor};
+use tch::{nn, Kind, Tensor};
 
 use crate::pipelines::common::{ModelType, TokenizerOption};
 use crate::pipelines::generation_utils::private_generation_utils::{
@@ -922,14 +922,14 @@ impl ProphetNetConditionalGenerator {
         let device: tch::Device = generate_config.device.into();
 
         generate_config.validate();
-        let mut var_store = nn::VarStore::new(device.into());
+        let mut var_store = nn::VarStore::new(device);
         let config = ProphetNetConfig::from_file(config_path);
         let model = ProphetNetForConditionalGeneration::new(var_store.root(), &config)?;
         crate::resources::load_weights(
             &generate_config.model_resource,
             &mut var_store,
             generate_config.kind,
-            device.into(),
+            device,
         )?;
 
         let bos_token_id = Some(config.bos_token_id);
@@ -1012,8 +1012,8 @@ impl PrivateLanguageGenerator for ProphetNetConditionalGenerator {
         let (
             input_ids,
             attention_mask,
-            token_type_ids,
-            position_ids,
+            _token_type_ids,
+            _position_ids,
             input_embeds,
             encoder_outputs,
             decoder_input_ids,

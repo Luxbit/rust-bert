@@ -1,3 +1,4 @@
+#![cfg(feature = "libtorch")]
 use rust_bert::pipelines::keywords_extraction::{
     KeywordExtractionConfig, KeywordExtractionModel, KeywordScorerType,
 };

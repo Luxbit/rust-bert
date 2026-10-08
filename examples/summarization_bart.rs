@@ -12,26 +12,26 @@
 
 extern crate anyhow;
 
-use rust_bert::bart::{
-    BartConfigResources, BartMergesResources, BartModelResources, BartVocabResources,
-};
 use rust_bert::pipelines::common::ModelResource;
 use rust_bert::pipelines::summarization::{SummarizationConfig, SummarizationModel};
 use rust_bert::resources::RemoteResource;
-use tch::Device;
 
 fn main() -> anyhow::Result<()> {
-    let config_resource = Box::new(RemoteResource::from_pretrained(
-        BartConfigResources::DISTILBART_CNN_6_6,
+    let config_resource = Box::new(RemoteResource::new(
+        "https://huggingface.co/distilbart-cnn-6-6/resolve/main/config.json",
+        "distilbart-cnn-6-6/config",
     ));
-    let vocab_resource = Box::new(RemoteResource::from_pretrained(
-        BartVocabResources::DISTILBART_CNN_6_6,
+    let vocab_resource = Box::new(RemoteResource::new(
+        "https://huggingface.co/distilbart-cnn-6-6/resolve/main/vocab.json",
+        "distilbart-cnn-6-6/vocab",
     ));
-    let merges_resource = Box::new(RemoteResource::from_pretrained(
-        BartMergesResources::DISTILBART_CNN_6_6,
+    let merges_resource = Box::new(RemoteResource::new(
+        "https://huggingface.co/distilbart-cnn-6-6/resolve/main/merges.txt",
+        "distilbart-cnn-6-6/merges",
     ));
-    let model_resource = Box::new(RemoteResource::from_pretrained(
-        BartModelResources::DISTILBART_CNN_6_6,
+    let model_resource = Box::new(RemoteResource::new(
+        "https://huggingface.co/distilbart-cnn-6-6/resolve/main/rust_model.ot",
+        "distilbart-cnn-6-6/model",
     ));
 
     let summarization_config = SummarizationConfig {
@@ -43,7 +43,7 @@ fn main() -> anyhow::Result<()> {
         length_penalty: 1.0,
         min_length: 56,
         max_length: Some(142),
-        device: Device::Cpu,
+        device: rust_bert::Device::Cpu,
         ..Default::default()
     };
 

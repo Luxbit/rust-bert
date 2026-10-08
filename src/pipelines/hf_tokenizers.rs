@@ -15,7 +15,7 @@ use rust_tokenizers::{
 };
 use serde::{de, Deserialize, Deserializer};
 use std::borrow::Cow;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::fmt;
 use std::fs::File;
 use std::io::BufReader;
@@ -551,7 +551,9 @@ impl HFTokenizer {
             .collect();
         let overflowing: Vec<Encoding> = vec![];
         let attention_mask = vec![1; ids.len()];
-        let sequence_ranges = HashMap::new();
+        // `Encoding::new` expects the tokenizers crate's `AHashMap` type; an
+        // empty default value infers to the right type without naming it.
+        let sequence_ranges = Default::default();
         Encoding::new(
             ids,
             type_ids,

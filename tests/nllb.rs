@@ -5,7 +5,6 @@ use rust_bert::nllb::{
 use rust_bert::pipelines::common::{ModelResource, ModelType};
 use rust_bert::pipelines::translation::{Language, TranslationConfig, TranslationModel};
 use rust_bert::resources::RemoteResource;
-use tch::Device;
 
 #[test]
 // #[cfg_attr(not(feature = "all-tests"), ignore)]
@@ -29,7 +28,7 @@ fn nllb_translation() -> anyhow::Result<()> {
         Some(merges_resource),
         source_languages,
         target_languages,
-        Device::Cpu,
+        rust_bert::Device::Cpu,
     );
     let model = TranslationModel::new(translation_config)?;
 

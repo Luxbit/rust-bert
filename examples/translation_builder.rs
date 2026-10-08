@@ -15,7 +15,7 @@ extern crate anyhow;
 
 use rust_bert::pipelines::common::ModelType;
 use rust_bert::pipelines::translation::{Language, TranslationModelBuilder};
-use tch::Device;
+use rust_bert::Device;
 
 fn main() -> anyhow::Result<()> {
     let model = TranslationModelBuilder::new()

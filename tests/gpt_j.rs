@@ -141,33 +141,33 @@ fn gpt_j_correctness() -> anyhow::Result<()> {
     .lm_logits;
 
     if matches!(device, Device::Cpu) {
-        assert!((logits.double_value(&[0, 0, 0]) - -0.8343).abs() < 1e-4);
-        assert!((logits.double_value(&[0, 0, 1]) - 0.0203).abs() < 1e-4);
-        assert!((logits.double_value(&[0, 0, 2]) - 0.4745).abs() < 1e-4);
-        assert!((logits.double_value(&[0, 0, 50397]) - 0.2641).abs() < 1e-4);
-        assert!((logits.double_value(&[0, 0, 50398]) - 0.1926).abs() < 1e-4);
-        assert!((logits.double_value(&[0, 0, 50399]) - 0.0204).abs() < 1e-4);
+        assert!((logits[[0, 0, 0]] as f64 - -0.8343).abs() < 1e-4);
+        assert!((logits[[0, 0, 1]] as f64 - 0.0203).abs() < 1e-4);
+        assert!((logits[[0, 0, 2]] as f64 - 0.4745).abs() < 1e-4);
+        assert!((logits[[0, 0, 50397]] as f64 - 0.2641).abs() < 1e-4);
+        assert!((logits[[0, 0, 50398]] as f64 - 0.1926).abs() < 1e-4);
+        assert!((logits[[0, 0, 50399]] as f64 - 0.0204).abs() < 1e-4);
 
-        assert!((logits.double_value(&[1, 0, 0]) - -0.0647).abs() < 1e-4);
-        assert!((logits.double_value(&[1, 0, 1]) - 0.0105).abs() < 1e-4);
-        assert!((logits.double_value(&[1, 0, 2]) - -0.3448).abs() < 1e-4);
-        assert!((logits.double_value(&[1, 0, 50397]) - -0.0445).abs() < 1e-4);
-        assert!((logits.double_value(&[1, 0, 50398]) - 0.0639).abs() < 1e-4);
-        assert!((logits.double_value(&[1, 0, 50399]) - -0.1167).abs() < 1e-4);
+        assert!((logits[[1, 0, 0]] as f64 - -0.0647).abs() < 1e-4);
+        assert!((logits[[1, 0, 1]] as f64 - 0.0105).abs() < 1e-4);
+        assert!((logits[[1, 0, 2]] as f64 - -0.3448).abs() < 1e-4);
+        assert!((logits[[1, 0, 50397]] as f64 - -0.0445).abs() < 1e-4);
+        assert!((logits[[1, 0, 50398]] as f64 - 0.0639).abs() < 1e-4);
+        assert!((logits[[1, 0, 50399]] as f64 - -0.1167).abs() < 1e-4);
     } else {
-        assert!((logits.double_value(&[0, 0, 0]) - -0.1110).abs() < 1e-2);
-        assert!((logits.double_value(&[0, 0, 1]) - 0.0565).abs() < 1e-2);
-        assert!((logits.double_value(&[0, 0, 2]) - 0.1273).abs() < 1e-2);
-        assert!((logits.double_value(&[0, 0, 50397]) - -0.1879).abs() < 1e-2);
-        assert!((logits.double_value(&[0, 0, 50398]) - -0.1114).abs() < 1e-2);
-        assert!((logits.double_value(&[0, 0, 50399]) - -0.3042).abs() < 1e-2);
+        assert!((logits[[0, 0, 0]] as f64 - -0.1110).abs() < 1e-2);
+        assert!((logits[[0, 0, 1]] as f64 - 0.0565).abs() < 1e-2);
+        assert!((logits[[0, 0, 2]] as f64 - 0.1273).abs() < 1e-2);
+        assert!((logits[[0, 0, 50397]] as f64 - -0.1879).abs() < 1e-2);
+        assert!((logits[[0, 0, 50398]] as f64 - -0.1114).abs() < 1e-2);
+        assert!((logits[[0, 0, 50399]] as f64 - -0.3042).abs() < 1e-2);
 
-        assert!((logits.double_value(&[1, 0, 0]) - -0.0651).abs() < 1e-2);
-        assert!((logits.double_value(&[1, 0, 1]) - 0.0107).abs() < 1e-2);
-        assert!((logits.double_value(&[1, 0, 2]) - -0.3452).abs() < 1e-2);
-        assert!((logits.double_value(&[1, 0, 50397]) - -0.0436).abs() < 1e-2);
-        assert!((logits.double_value(&[1, 0, 50398]) - 0.0645).abs() < 1e-2);
-        assert!((logits.double_value(&[1, 0, 50399]) - -0.1166).abs() < 1e-2);
+        assert!((logits[[1, 0, 0]] as f64 - -0.0651).abs() < 1e-2);
+        assert!((logits[[1, 0, 1]] as f64 - 0.0107).abs() < 1e-2);
+        assert!((logits[[1, 0, 2]] as f64 - -0.3452).abs() < 1e-2);
+        assert!((logits[[1, 0, 50397]] as f64 - -0.0436).abs() < 1e-2);
+        assert!((logits[[1, 0, 50398]] as f64 - 0.0645).abs() < 1e-2);
+        assert!((logits[[1, 0, 50399]] as f64 - -0.1166).abs() < 1e-2);
     }
 
     Ok(())

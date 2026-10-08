@@ -60,7 +60,7 @@
 //! use rust_bert::pipelines::translation::{
 //!     Language, TranslationConfig, TranslationModel, TranslationModelBuilder,
 //! };
-//! use tch::Device;
+//! use rust_bert::Device;
 //! let model = TranslationModelBuilder::new()
 //!     .with_device(Device::cuda_if_available())
 //!     .with_model_type(ModelType::Marian)
@@ -483,7 +483,7 @@
 //! Note that the `special_token_maps` is required to create a `TokenizerOption` from a HFTokenizer. This file is sometimes not provided
 //! (the Python Transformers library provides the special token map information as part of the actual tokenizer loaded wrapping the rust-based
 //! tokenizer). If that is the case a temporary file with the special token map information can be created as illustrated below:
-//! ```no_run
+//! ```ignore
 //! fn main() -> anyhow::Result<()> {
 //!   use std::fs::File;
 //!   use std::io::Write;

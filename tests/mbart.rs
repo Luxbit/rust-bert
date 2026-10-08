@@ -67,7 +67,7 @@ fn mbart_lm_model() -> anyhow::Result<()> {
 #[test]
 fn mbart_translation() -> anyhow::Result<()> {
     let model = TranslationModelBuilder::new()
-        .with_device(Device::cuda_if_available())
+        .with_device(rust_bert::Device::cuda_if_available())
         .with_model_type(ModelType::MBart)
         .create_model()?;
 

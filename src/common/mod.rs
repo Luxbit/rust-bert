@@ -16,5 +16,6 @@ pub(crate) mod summary;
 pub(crate) mod tensor_conversion;
 pub mod tensor_ops;
 
+#[cfg(feature = "libtorch")]
 pub use activations::Activation;
 pub use config::Config;

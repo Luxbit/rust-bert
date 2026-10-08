@@ -40,7 +40,7 @@
 //! an example of a translation model based on a ONNX export of M2M100:
 //! ```no_run
 //! use rust_bert::m2m_100::{M2M100SourceLanguages, M2M100TargetLanguages};
-//! use tch::Device;
+//! use rust_bert::Device;
 //!
 //! use rust_bert::pipelines::common::{ModelResource, ModelType, ONNXModelResources};
 //! use rust_bert::pipelines::translation::{Language, TranslationConfig, TranslationModel};

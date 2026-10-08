@@ -16,7 +16,6 @@ use rust_bert::pipelines::common::{ModelResource, ModelType};
 use rust_bert::pipelines::translation::{Language, TranslationConfig, TranslationModel};
 use rust_bert::resources::RemoteResource;
 use rust_bert::t5::{T5ConfigResources, T5ModelResources, T5VocabResources};
-use tch::Device;
 
 fn main() -> anyhow::Result<()> {
     let model_resource = RemoteResource::from_pretrained(T5ModelResources::T5_BASE);
@@ -44,7 +43,7 @@ fn main() -> anyhow::Result<()> {
         None,
         source_languages,
         target_languages,
-        Device::cuda_if_available(),
+        rust_bert::Device::cuda_if_available(),
     );
     let model = TranslationModel::new(translation_config)?;
 

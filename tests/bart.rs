@@ -12,7 +12,7 @@ use rust_bert::resources::{RemoteResource, ResourceProvider};
 use rust_bert::Device;
 use rust_bert::{Config, RustBertError};
 use rust_tokenizers::tokenizer::{RobertaTokenizer, Tokenizer, TruncationStrategy};
-use tch::{nn, Device as TchDevice, Tensor};
+use tch::{nn, Tensor};
 
 #[test]
 fn bart_lm_model() -> anyhow::Result<()> {
@@ -102,7 +102,7 @@ fn bart_summarization_greedy() -> anyhow::Result<()> {
         length_penalty: 1.0,
         min_length: 56,
         max_length: Some(142),
-        device: TchDevice::Cpu,
+        device: rust_bert::Device::Cpu,
         ..Default::default()
     };
     let model = SummarizationModel::new(summarization_config)?;
@@ -163,7 +163,7 @@ fn bart_summarization_beam_search() -> anyhow::Result<()> {
         min_length: 56,
         max_length: Some(142),
         length_penalty: 1.0,
-        device: TchDevice::Cpu,
+        device: rust_bert::Device::Cpu,
         ..Default::default()
     };
     let model = SummarizationModel::new(summarization_config)?;

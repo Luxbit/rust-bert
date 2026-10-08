@@ -14,13 +14,10 @@
 use crate::common::activations::{_tanh, TensorFunction};
 use crate::common::dropout::Dropout;
 use crate::common::embeddings::get_shape_and_device_from_ids_embeddings_pair;
-pub use crate::fnet::config::{
-    FNetConfig, FNetConfigResources, FNetModelResources, FNetVocabResources,
-};
+pub use crate::fnet::config::FNetConfig;
 use crate::fnet::embeddings::FNetEmbeddings;
 use crate::fnet::encoder::FNetEncoder;
-use crate::{Activation, Config, RustBertError};
-use serde::{Deserialize, Serialize};
+use crate::RustBertError;
 use std::borrow::Borrow;
 
 use tch::nn::LayerNormConfig;
@@ -972,6 +969,7 @@ pub struct FNetQuestionAnsweringOutput {
 mod test {
     use tch::Device;
 
+    use crate::fnet::config::FNetConfigResources;
     use crate::{
         resources::{RemoteResource, ResourceProvider},
         Config,

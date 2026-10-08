@@ -272,7 +272,6 @@ impl SummarizationOption {
                 config.into(),
             )?)),
             #[cfg(feature = "libtorch")]
-            #[cfg(feature = "libtorch")]
             (ModelType::LongT5, _) => Ok(SummarizationOption::LongT5(
                 torch_models::LongT5Generator::new(config.into())?,
             )),
@@ -284,6 +283,7 @@ impl SummarizationOption {
             (ModelType::Pegasus, _) => Ok(SummarizationOption::Pegasus(
                 torch_models::PegasusConditionalGenerator::new(config.into())?,
             )),
+            #[cfg(feature = "libtorch")]
             _ => Err(RustBertError::InvalidConfigurationError(format!(
                 "Summarization not implemented for {:?}!",
                 config.model_type
@@ -579,6 +579,7 @@ impl SummarizationModel {
 }
 
 #[cfg(test)]
+#[cfg(feature = "libtorch")]
 mod test {
     use super::*;
 

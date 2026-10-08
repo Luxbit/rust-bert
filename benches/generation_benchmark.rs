@@ -10,7 +10,6 @@ use rust_bert::pipelines::text_generation::{TextGenerationConfig, TextGeneration
 use rust_bert::resources::RemoteResource;
 use std::hint::black_box;
 use std::time::{Duration, Instant};
-use tch::Device;
 
 fn create_text_generation_model() -> TextGenerationModel {
     let config = TextGenerationConfig {
@@ -37,7 +36,7 @@ fn create_text_generation_model() -> TextGenerationModel {
         num_beam_groups: None,
         diversity_penalty: None,
         num_return_sequences: 5,
-        device: Device::cuda_if_available(),
+        device: rust_bert::Device::cuda_if_available(),
         kind: None,
     };
     TextGenerationModel::new(config).unwrap()
