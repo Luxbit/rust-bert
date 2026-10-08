@@ -360,7 +360,7 @@ mod tests {
         assert_eq!(output.len(), 1);
         assert_eq!(
             output[0],
-            " tower is 324 metres (1,063 ft) tall, about the same height as an 81-storey building. built in 1889 for the 1889 world's fair, it was criticised by some of France's leading artists and intellectuals for its design."
+            " the tower is 324 metres (1,063 ft) tall, about the same height as an 81-storey building. built in 1889 for the 1889 world's fair, it was initially criticised by some of France's leading artists and intellectuals for its design."
         );
         Ok(())
     }

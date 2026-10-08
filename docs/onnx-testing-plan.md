@@ -199,9 +199,24 @@ phase verification loops:
    input_embeds, decoder_input_ids to encoder_outputs, ...) — made torch-side
    encoder-decoder generation panic or produce garbage.
 
-**Open follow-up (top priority):** beam-search scoring in the shared ndarray
-driver diverges from the pre-refactor goldens (torch-side; ONNX beam search
-matches its own goldens). Affected: `tests/gpt2.rs` beam tests, torch T5/BART/
-Marian/MBart/M2M100 summarization & translation goldens, and 8 `#[ignore]`d
-parity tests in `tests/onnx_parity.rs`. Also: NaN per-token scores when a
-`prefix_allowed_tokens_fn` is used (both backends).
+**Beam-search regression (resolved 2026-10-08).** Three defects in the shared
+ndarray driver, all fixed: (1) the top-k was taken per beam instead of jointly
+over each batch element's beams; (2) decoder-only inputs / attention masks were
+not tiled across beams before the loop (misaligned masks for batch > 1); (3)
+encoder-decoder attention masks were not re-indexed by the beam selection.
+`tests/gpt2.rs` is 12/12 again and the full torch generation suites pass with
+their original goldens (bart, t5, mbart, m2m100, longt5, gpt-neo, gpt-j,
+openai-gpt, reformer, prophetnet, distilgpt2). The parity suite runs 11
+cross-backend tests, all green — greedy and beam decoding now produce identical
+text on both backends.
+
+**Remaining known issues:**
+- Marian beam search diverges from its golden at a single near-tie token
+  ("paresseux" vs "pare" + EOS); every other checkpoint matches exactly.
+- `xlnet_generation_beam_search` is `#[ignore]`d: XLNet's 3-D permutation mask
+  cannot be carried by the 2-D `PreparedInput` (needs a type-level change).
+- Per-token scores are NaN in both backends when a `prefix_allowed_tokens_fn`
+  masks all but the forced token (log-softmax over a fully-masked row).
+- The Optimum GPT2 export has no `position_ids` input, so left-padded
+  multi-prompt beam search cannot be compared cross-backend (the parity test
+  uses equal-length prompts).

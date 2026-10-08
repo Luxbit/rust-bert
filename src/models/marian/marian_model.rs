@@ -871,9 +871,9 @@ impl PrivateLanguageGenerator for MarianGenerator {
             option_array2_to_tensor(attention_mask),
             option_array2_to_tensor(_token_type_ids),
             option_array2_to_tensor(_position_ids),
-            option_array2_to_tensor(decoder_input_ids),
             option_array_to_tensor_f32(_input_embeds),
             option_array_to_tensor_f32(encoder_outputs),
+            option_array2_to_tensor(decoder_input_ids),
         );
         #[cfg(not(feature = "libtorch"))]
         let (_, _, _, _, _, _, _) = (

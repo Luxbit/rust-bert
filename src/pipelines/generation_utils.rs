@@ -1215,6 +1215,18 @@ pub(crate) mod private_generation_utils {
                 .collect::<Vec<BeamHypotheses>>();
 
             let vocab_size = self.get_vocab_size();
+            // Decoder-only generation tiles the prompts across the beams so that
+            // every step operates on (batch * num_beams) rows, keeping the
+            // attention mask aligned with the inputs (reference behavior).
+            if !self.is_encoder_decoder() && gen_opt.num_beams > 1 {
+                let tiles: Vec<i64> = (0..batch_size)
+                    .flat_map(|batch_index| {
+                        std::iter::repeat_n(batch_index, gen_opt.num_beams as usize)
+                    })
+                    .collect();
+                input_ids = index_select_rows_i64(&input_ids, &tiles);
+                attention_mask = index_select_rows_i64(&attention_mask, &tiles);
+            }
             // Beam scores: initialized to -1e9 except for the first beam of each group
             let mut beam_scores: Vec<f32> = vec![-1e9; (batch_size * gen_opt.num_beams) as usize];
             for beam_index in (0..gen_opt.num_beams).step_by(num_sub_beams as usize) {
@@ -1441,14 +1453,25 @@ pub(crate) mod private_generation_utils {
                             }
                             (sampled_scores_rows, sampled_tokens_rows)
                         } else {
-                            let flattened: Vec<f32> = next_scores.iter().copied().collect();
-                            let mut top_tokens_rows = Vec::with_capacity(next_scores.nrows());
-                            let mut top_scores_rows = Vec::with_capacity(next_scores.nrows());
-                            for row in 0..next_scores.nrows() {
-                                let row_values = &flattened
-                                    [row * next_scores.ncols()..(row + 1) * next_scores.ncols()];
+                            // Joint top-k over all the beams of a batch element
+                            // (reference behavior): the group rows are flattened
+                            // into a single (group_size * vocab) candidate list so
+                            // that the best hypotheses across all beams survive,
+                            // instead of taking the top candidates of each beam
+                            // independently.
+                            let vocab_width = next_scores.ncols();
+                            let rows_per_batch = next_scores.nrows() / batch_size as usize;
+                            let mut top_tokens_rows = Vec::with_capacity(batch_size as usize);
+                            let mut top_scores_rows = Vec::with_capacity(batch_size as usize);
+                            for batch_index in 0..batch_size as usize {
+                                let mut merged: Vec<f32> =
+                                    Vec::with_capacity(rows_per_batch * vocab_width);
+                                for group_row in 0..rows_per_batch {
+                                    let row = batch_index * rows_per_batch + group_row;
+                                    merged.extend(next_scores.row(row).iter().copied());
+                                }
                                 let (values, indices) = crate::common::tensor_ops::topk_last_dim(
-                                    &ndarray::Array1::from(row_values.to_vec()).into_dyn(),
+                                    &ndarray::Array1::from(merged).into_dyn(),
                                     2 * group_size as usize,
                                 );
                                 top_scores_rows.push(
@@ -1479,17 +1502,26 @@ pub(crate) mod private_generation_utils {
                     for batch_index in 0..batch_size as usize {
                         let row_tokens = &next_tokens_flat[batch_index];
                         let row_scores = &next_scores_flat[batch_index];
-                        // effective beam id of each candidate
+                        // Effective beam id of each candidate: the flattened
+                        // candidate index maps to (beam within group, token);
+                        // beams are laid out per batch element as
+                        // [batch_index * rows_per_batch, ...).
+                        let rows_per_batch = if num_beam_groups > 1 {
+                            group_size
+                        } else {
+                            gen_opt.num_beams
+                        } as usize;
+                        let vocab_width = vocab_size;
                         let effective_beam_ids: Vec<i64> = row_tokens
                             .iter()
                             .map(|&token| {
-                                let beam_id = token / vocab_size;
-                                batch_index as i64 * group_size + beam_id
+                                let beam_id = token / vocab_width;
+                                batch_index as i64 * rows_per_batch as i64 + beam_id
                             })
                             .collect();
                         let token_ids: Vec<i64> = row_tokens
                             .iter()
-                            .map(|&token| token - (token / vocab_size) * vocab_size)
+                            .map(|&token| token - (token / vocab_width) * vocab_width)
                             .collect();
                         let max_score =
                             row_scores.iter().copied().fold(f32::NEG_INFINITY, f32::max);
@@ -1605,7 +1637,11 @@ pub(crate) mod private_generation_utils {
                 }
                 encoder_outputs = self.reorder_cache(&mut past, encoder_outputs, &beam_indices);
 
-                if !self.is_encoder_decoder() {
+                if self.is_encoder_decoder() {
+                    // The decoder rows are re-ordered / tiled by the beam
+                    // selection; the encoder attention mask must follow.
+                    attention_mask = index_select_rows_i64(&attention_mask, &beam_indices);
+                } else {
                     let ones_column = vec![1i64; attention_mask.nrows()];
                     attention_mask = append_column(&attention_mask, &ones_column);
                 }
@@ -1698,11 +1734,21 @@ pub(crate) mod private_generation_utils {
                 .map(|max_length| min(max_sentence_length + 1, max_length))
                 .unwrap_or(max_sentence_length + 1);
 
+            // Padding is only observable when hypothesis lengths differ; the
+            // fallback value is irrelevant otherwise and must not require a
+            // pad / eos token to be configured (e.g. GPT has neither).
+            let pad_value = gen_opt
+                .pad_token_id
+                .or_else(|| {
+                    gen_opt
+                        .eos_token_ids
+                        .as_ref()
+                        .and_then(|ids| ids.first().copied())
+                })
+                .unwrap_or(0);
             let mut decoded = ndarray::Array2::<i64>::from_elem(
                 (output_batch_size as usize, sentence_max_length as usize),
-                gen_opt
-                    .pad_token_id
-                    .unwrap_or_else(|| gen_opt.eos_token_ids.as_ref().unwrap()[0]),
+                pad_value,
             );
             for (hypothesis_index, best_id) in best_ids.iter().enumerate() {
                 let sentence_length = sentence_lengths[hypothesis_index] as usize;
