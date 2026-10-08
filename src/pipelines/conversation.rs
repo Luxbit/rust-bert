@@ -179,7 +179,7 @@ impl From<ConversationConfig> for GenerateConfig {
             num_return_sequences: config.num_return_sequences,
             num_beam_groups: config.num_beam_groups,
             diversity_penalty: config.diversity_penalty,
-            device: config.device,
+            device: crate::Device::from(config.device),
             kind: config.kind,
         }
     }
@@ -767,7 +767,21 @@ impl ConversationOption {
     ) -> Result<Vec<Vec<i64>>, RustBertError> {
         Ok(match *self {
             Self::GPT2(ref model) => model
-                .generate_from_ids_and_past(input_ids, attention_mask, None)?
+                .generate_from_ids_and_past(
+                    crate::common::tensor_conversion::tensor_to_array_i64(&input_ids)
+                        .expect("Error converting input")
+                        .into_dimensionality::<ndarray::Ix2>()
+                        .unwrap(),
+                    Some(
+                        crate::common::tensor_conversion::tensor_to_array_i64(
+                            attention_mask.as_ref().unwrap(),
+                        )
+                        .expect("Error converting attention mask")
+                        .into_dimensionality::<ndarray::Ix2>()
+                        .unwrap(),
+                    ),
+                    None,
+                )?
                 .into_iter()
                 .map(|output| output.indices)
                 .collect(),

@@ -62,21 +62,26 @@
 //! # ;
 //! ```
 
-use tch::{Device, Kind};
+use crate::Device;
+#[cfg(feature = "libtorch")]
+use tch::Kind;
 
-use crate::bart::BartGenerator;
+#[cfg(feature = "libtorch")]
+mod torch_models {
+    pub use crate::bart::BartGenerator;
+    pub use crate::longt5::LongT5Generator;
+    pub use crate::pegasus::PegasusConditionalGenerator;
+    pub use crate::prophetnet::ProphetNetConditionalGenerator;
+    pub use crate::t5::T5Generator;
+}
 use crate::common::error::RustBertError;
-use crate::pegasus::PegasusConditionalGenerator;
 use crate::pipelines::common::{ModelResource, ModelType, TokenizerOption};
 use crate::pipelines::generation_utils::{GenerateConfig, LanguageGenerator};
-use crate::prophetnet::ProphetNetConditionalGenerator;
 use crate::resources::ResourceProvider;
-use crate::t5::T5Generator;
 
-use crate::longt5::LongT5Generator;
 #[cfg(feature = "onnx")]
 use crate::pipelines::onnx::ONNXConditionalGenerator;
-#[cfg(feature = "remote")]
+#[cfg(all(feature = "remote", feature = "libtorch"))]
 use crate::{
     bart::{BartConfigResources, BartMergesResources, BartModelResources, BartVocabResources},
     resources::RemoteResource,
@@ -126,7 +131,8 @@ pub struct SummarizationConfig {
     pub diversity_penalty: Option<f64>,
     /// Device to place the model on (default: CUDA/GPU when available)
     pub device: Device,
-    /// Model weights precision. If not provided, will default to full precision on CPU, or the loaded weights precision otherwise
+    /// Model weights precision (LibTorch backend only). If not provided, will default to full precision on CPU, or the loaded weights precision otherwise
+    #[cfg(feature = "libtorch")]
     pub kind: Option<Kind>,
 }
 
@@ -172,12 +178,13 @@ impl SummarizationConfig {
             num_beam_groups: None,
             diversity_penalty: None,
             device: Device::cuda_if_available(),
+            #[cfg(feature = "libtorch")]
             kind: None,
         }
     }
 }
 
-#[cfg(feature = "remote")]
+#[cfg(all(feature = "remote", feature = "libtorch"))]
 impl Default for SummarizationConfig {
     fn default() -> SummarizationConfig {
         SummarizationConfig::new(
@@ -217,6 +224,7 @@ impl From<SummarizationConfig> for GenerateConfig {
             num_beam_groups: config.num_beam_groups,
             diversity_penalty: config.diversity_penalty,
             device: config.device,
+            #[cfg(feature = "libtorch")]
             kind: config.kind,
         }
     }
@@ -225,15 +233,20 @@ impl From<SummarizationConfig> for GenerateConfig {
 /// # Abstraction that holds one particular summarization model, for any of the supported models
 pub enum SummarizationOption {
     /// Summarizer based on BART model
-    Bart(BartGenerator),
+    #[cfg(feature = "libtorch")]
+    Bart(torch_models::BartGenerator),
     /// Summarizer based on T5 model
-    T5(T5Generator),
+    #[cfg(feature = "libtorch")]
+    T5(torch_models::T5Generator),
     /// Summarizer based on LongT5 model
-    LongT5(LongT5Generator),
+    #[cfg(feature = "libtorch")]
+    LongT5(torch_models::LongT5Generator),
     /// Summarizer based on ProphetNet model
-    ProphetNet(ProphetNetConditionalGenerator),
+    #[cfg(feature = "libtorch")]
+    ProphetNet(torch_models::ProphetNetConditionalGenerator),
     /// Summarizer based on Pegasus model
-    Pegasus(PegasusConditionalGenerator),
+    #[cfg(feature = "libtorch")]
+    Pegasus(torch_models::PegasusConditionalGenerator),
     /// Summarizer based on ONNX model
     #[cfg(feature = "onnx")]
     ONNX(ONNXConditionalGenerator),
@@ -246,18 +259,30 @@ impl SummarizationOption {
             (_, &ModelResource::ONNX(_)) => Ok(SummarizationOption::ONNX(
                 ONNXConditionalGenerator::new(config.into(), None)?,
             )),
-            (ModelType::Bart, _) => Ok(SummarizationOption::Bart(BartGenerator::new(
-                config.into(),
-            )?)),
-            (ModelType::T5, _) => Ok(SummarizationOption::T5(T5Generator::new(config.into())?)),
-            (ModelType::LongT5, _) => Ok(SummarizationOption::LongT5(LongT5Generator::new(
-                config.into(),
-            )?)),
-            (ModelType::ProphetNet, _) => Ok(SummarizationOption::ProphetNet(
-                ProphetNetConditionalGenerator::new(config.into())?,
+            #[cfg(all(feature = "onnx", not(feature = "libtorch")))]
+            _ => Err(RustBertError::InvalidConfigurationError(
+                "Torch models require the `libtorch` feature".to_string(),
             )),
+            #[cfg(feature = "libtorch")]
+            (ModelType::Bart, _) => Ok(SummarizationOption::Bart(
+                torch_models::BartGenerator::new(config.into())?,
+            )),
+            #[cfg(feature = "libtorch")]
+            (ModelType::T5, _) => Ok(SummarizationOption::T5(torch_models::T5Generator::new(
+                config.into(),
+            )?)),
+            #[cfg(feature = "libtorch")]
+            #[cfg(feature = "libtorch")]
+            (ModelType::LongT5, _) => Ok(SummarizationOption::LongT5(
+                torch_models::LongT5Generator::new(config.into())?,
+            )),
+            #[cfg(feature = "libtorch")]
+            (ModelType::ProphetNet, _) => Ok(SummarizationOption::ProphetNet(
+                torch_models::ProphetNetConditionalGenerator::new(config.into())?,
+            )),
+            #[cfg(feature = "libtorch")]
             (ModelType::Pegasus, _) => Ok(SummarizationOption::Pegasus(
-                PegasusConditionalGenerator::new(config.into())?,
+                torch_models::PegasusConditionalGenerator::new(config.into())?,
             )),
             _ => Err(RustBertError::InvalidConfigurationError(format!(
                 "Summarization not implemented for {:?}!",
@@ -275,21 +300,31 @@ impl SummarizationOption {
             (_, &ModelResource::ONNX(_)) => Ok(SummarizationOption::ONNX(
                 ONNXConditionalGenerator::new_with_tokenizer(config.into(), tokenizer, None)?,
             )),
+            #[cfg(feature = "libtorch")]
             (ModelType::Bart, _) => Ok(SummarizationOption::Bart(
-                BartGenerator::new_with_tokenizer(config.into(), tokenizer)?,
+                torch_models::BartGenerator::new_with_tokenizer(config.into(), tokenizer)?,
             )),
-            (ModelType::T5, _) => Ok(SummarizationOption::T5(T5Generator::new_with_tokenizer(
-                config.into(),
-                tokenizer,
-            )?)),
+            #[cfg(feature = "libtorch")]
+            (ModelType::T5, _) => Ok(SummarizationOption::T5(
+                torch_models::T5Generator::new_with_tokenizer(config.into(), tokenizer)?,
+            )),
+            #[cfg(feature = "libtorch")]
             (ModelType::LongT5, _) => Ok(SummarizationOption::LongT5(
-                LongT5Generator::new_with_tokenizer(config.into(), tokenizer)?,
+                torch_models::LongT5Generator::new_with_tokenizer(config.into(), tokenizer)?,
             )),
+            #[cfg(feature = "libtorch")]
             (ModelType::ProphetNet, _) => Ok(SummarizationOption::ProphetNet(
-                ProphetNetConditionalGenerator::new_with_tokenizer(config.into(), tokenizer)?,
+                torch_models::ProphetNetConditionalGenerator::new_with_tokenizer(
+                    config.into(),
+                    tokenizer,
+                )?,
             )),
+            #[cfg(feature = "libtorch")]
             (ModelType::Pegasus, _) => Ok(SummarizationOption::Pegasus(
-                PegasusConditionalGenerator::new_with_tokenizer(config.into(), tokenizer)?,
+                torch_models::PegasusConditionalGenerator::new_with_tokenizer(
+                    config.into(),
+                    tokenizer,
+                )?,
             )),
             _ => Err(RustBertError::InvalidConfigurationError(format!(
                 "Summarization not implemented for {:?}!",
@@ -301,10 +336,15 @@ impl SummarizationOption {
     /// Returns the `ModelType` for this SummarizationOption
     pub fn model_type(&self) -> ModelType {
         match *self {
+            #[cfg(feature = "libtorch")]
             Self::Bart(_) => ModelType::Bart,
+            #[cfg(feature = "libtorch")]
             Self::T5(_) => ModelType::T5,
+            #[cfg(feature = "libtorch")]
             Self::LongT5(_) => ModelType::LongT5,
+            #[cfg(feature = "libtorch")]
             Self::ProphetNet(_) => ModelType::ProphetNet,
+            #[cfg(feature = "libtorch")]
             Self::Pegasus(_) => ModelType::Pegasus,
             #[cfg(feature = "onnx")]
             Self::ONNX(_) => ModelType::ONNX,
@@ -314,10 +354,15 @@ impl SummarizationOption {
     /// Interface method to access tokenizer
     pub fn get_tokenizer(&self) -> &TokenizerOption {
         match self {
+            #[cfg(feature = "libtorch")]
             Self::Bart(model_ref) => model_ref.get_tokenizer(),
+            #[cfg(feature = "libtorch")]
             Self::T5(model_ref) => model_ref.get_tokenizer(),
+            #[cfg(feature = "libtorch")]
             Self::LongT5(model_ref) => model_ref.get_tokenizer(),
+            #[cfg(feature = "libtorch")]
             Self::ProphetNet(model_ref) => model_ref.get_tokenizer(),
+            #[cfg(feature = "libtorch")]
             Self::Pegasus(model_ref) => model_ref.get_tokenizer(),
             #[cfg(feature = "onnx")]
             Self::ONNX(model_ref) => model_ref.get_tokenizer(),
@@ -327,10 +372,15 @@ impl SummarizationOption {
     /// Interface method to access tokenizer
     pub fn get_tokenizer_mut(&mut self) -> &mut TokenizerOption {
         match self {
+            #[cfg(feature = "libtorch")]
             Self::Bart(model_ref) => model_ref.get_tokenizer_mut(),
+            #[cfg(feature = "libtorch")]
             Self::T5(model_ref) => model_ref.get_tokenizer_mut(),
+            #[cfg(feature = "libtorch")]
             Self::LongT5(model_ref) => model_ref.get_tokenizer_mut(),
+            #[cfg(feature = "libtorch")]
             Self::ProphetNet(model_ref) => model_ref.get_tokenizer_mut(),
+            #[cfg(feature = "libtorch")]
             Self::Pegasus(model_ref) => model_ref.get_tokenizer_mut(),
             #[cfg(feature = "onnx")]
             Self::ONNX(model_ref) => model_ref.get_tokenizer_mut(),
@@ -343,26 +393,31 @@ impl SummarizationOption {
         S: AsRef<str> + Send + Sync,
     {
         Ok(match *self {
+            #[cfg(feature = "libtorch")]
             Self::Bart(ref model) => model
                 .generate(prompt_texts, None)?
                 .into_iter()
                 .map(|output| output.text)
                 .collect(),
+            #[cfg(feature = "libtorch")]
             Self::T5(ref model) => model
                 .generate(prompt_texts, None)?
                 .into_iter()
                 .map(|output| output.text)
                 .collect(),
+            #[cfg(feature = "libtorch")]
             Self::LongT5(ref model) => model
                 .generate(prompt_texts, None)?
                 .into_iter()
                 .map(|output| output.text)
                 .collect(),
+            #[cfg(feature = "libtorch")]
             Self::ProphetNet(ref model) => model
                 .generate(prompt_texts, None)?
                 .into_iter()
                 .map(|output| output.text)
                 .collect(),
+            #[cfg(feature = "libtorch")]
             Self::Pegasus(ref model) => model
                 .generate(prompt_texts, None)?
                 .into_iter()

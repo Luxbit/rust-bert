@@ -19,8 +19,13 @@ use crate::gpt2::Gpt2Config;
 use crate::openai_gpt::transformer::Block;
 use crate::pipelines::common::{ModelType, TokenizerOption};
 use crate::pipelines::generation_utils::private_generation_utils::PrivateLanguageGenerator;
-use crate::pipelines::generation_utils::{Cache, GenerateConfig, LMModelOutput, LanguageGenerator};
+use crate::pipelines::generation_utils::LMModelOutput;
+use crate::pipelines::generation_utils::{option_array2_to_tensor, option_array_to_tensor_f32};
+use crate::pipelines::generation_utils::{
+    Cache, GenerateConfig, GeneratedLogits, LanguageGenerator,
+};
 use crate::{Config, RustBertError};
+use ndarray::ArrayD;
 use std::borrow::{Borrow, BorrowMut};
 use tch::kind::Kind::Int64;
 use tch::nn::embedding;
@@ -493,7 +498,7 @@ impl OpenAIGenerator {
         generate_config.validate();
 
         let config_path = generate_config.config_resource.get_local_path()?;
-        let device = generate_config.device;
+        let device: tch::Device = generate_config.device.into();
 
         let mut var_store = nn::VarStore::new(device);
         let config = Gpt2Config::from_file(config_path);
@@ -502,7 +507,7 @@ impl OpenAIGenerator {
             &generate_config.model_resource,
             &mut var_store,
             generate_config.kind,
-            device,
+            device.into(),
         )?;
 
         let bos_token_id = tokenizer.get_bos_id();
@@ -536,9 +541,10 @@ impl PrivateLanguageGenerator for OpenAIGenerator {
     fn _get_tokenizer_mut(&mut self) -> &mut TokenizerOption {
         &mut self.tokenizer
     }
-    fn get_device(&self) -> Device {
-        self.var_store.device()
+    fn get_device(&self) -> crate::Device {
+        crate::Device::from(self.var_store.device())
     }
+    #[cfg(feature = "libtorch")]
     fn get_var_store_mut(&mut self) -> Result<&mut nn::VarStore, RustBertError> {
         Ok(&mut self.var_store)
     }
@@ -569,27 +575,47 @@ impl PrivateLanguageGenerator for OpenAIGenerator {
 
     fn forward_t(
         &self,
-        input_ids: Option<&Tensor>,
+        input_ids: Option<&ndarray::Array2<i64>>,
         _layer_past: Cache,
-        attention_mask: Option<&Tensor>,
-        token_type_ids: Option<&Tensor>,
-        position_ids: Option<&Tensor>,
-        input_embeds: Option<&Tensor>,
-        _encoder_outputs: Option<&Tensor>,
-        _decoder_input_ids: Option<&Tensor>,
+        attention_mask: Option<&ndarray::Array2<i64>>,
+        token_type_ids: Option<&ndarray::Array2<i64>>,
+        position_ids: Option<&ndarray::Array2<i64>>,
+        input_embeds: Option<&ndarray::ArrayD<f32>>,
+        _encoder_outputs: Option<&ndarray::ArrayD<f32>>,
+        _decoder_input_ids: Option<&ndarray::Array2<i64>>,
         train: bool,
-    ) -> Result<LMModelOutput, RustBertError> {
-        self.model.forward_t(
+    ) -> Result<GeneratedLogits, RustBertError> {
+        #[cfg(feature = "libtorch")]
+        let (input_ids, attention_mask, token_type_ids, position_ids, input_embeds) = (
+            option_array2_to_tensor(input_ids),
+            option_array2_to_tensor(attention_mask),
+            option_array2_to_tensor(token_type_ids),
+            option_array2_to_tensor(position_ids),
+            option_array_to_tensor_f32(input_embeds),
+        );
+        #[cfg(not(feature = "libtorch"))]
+        let (_, _, _, _, _) = (
             input_ids,
-            _layer_past,
             attention_mask,
             token_type_ids,
             position_ids,
             input_embeds,
-            _encoder_outputs,
-            _decoder_input_ids,
+        );
+        let output = self.model.forward_t(
+            input_ids.as_ref(),
+            _layer_past,
+            attention_mask.as_ref(),
+            token_type_ids.as_ref(),
+            position_ids.as_ref(),
+            input_embeds.as_ref(),
+            None,
+            None,
             train,
-        )
+        )?;
+        Ok(GeneratedLogits {
+            lm_logits: crate::common::tensor_conversion::tensor_to_array_f32(&output.lm_logits)?,
+            cache: output.cache,
+        })
     }
 }
 

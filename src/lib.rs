@@ -741,10 +741,11 @@ pub use common::resources;
 pub use common::Activation;
 pub use common::Config;
 pub use models::{
-    albert, bert, deberta, deberta_v2, distilbert, electra, fnet, longformer, mobilebert, xlnet,
+    albert, bert, deberta, deberta_v2, distilbert, electra, fnet, gpt2, longformer, m2m_100, mbart,
+    mobilebert, xlnet,
 };
 #[cfg(feature = "libtorch")]
 pub use models::{
-    bart, gpt2, gpt_j, gpt_neo, longt5, m2m_100, marian, mbart, nllb, openai_gpt, pegasus,
-    prophetnet, reformer, roberta, t5,
+    bart, gpt_j, gpt_neo, longt5, marian, nllb, openai_gpt, pegasus, prophetnet, reformer, roberta,
+    t5,
 };

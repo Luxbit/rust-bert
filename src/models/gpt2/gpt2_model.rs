@@ -15,30 +15,29 @@
 use crate::common::activations::Activation;
 use crate::common::dropout::Dropout;
 use crate::common::embeddings::process_ids_embeddings_pair;
+pub use crate::gpt2::config::{
+    Gpt2Config, Gpt2ConfigResources, Gpt2MergesResources, Gpt2ModelResources, Gpt2VocabResources,
+};
 use crate::gpt2::transformer::Block;
 use crate::pipelines::common::{ModelType, TokenizerOption};
 use crate::pipelines::generation_utils::private_generation_utils::{
     PreparedInput, PrivateLanguageGenerator,
 };
-use crate::pipelines::generation_utils::{Cache, GenerateConfig, LMModelOutput, LanguageGenerator};
+use crate::pipelines::generation_utils::LMModelOutput;
+use crate::pipelines::generation_utils::{
+    last_column, option_array2_to_tensor, option_array_to_tensor_f32,
+};
+use crate::pipelines::generation_utils::{
+    Cache, GenerateConfig, GeneratedLogits, LanguageGenerator,
+};
 use crate::{Config, RustBertError};
+use ndarray::ArrayD;
 use serde::{Deserialize, Serialize};
 use std::borrow::{Borrow, BorrowMut};
+use std::cmp::{max, min};
 use tch::kind::Kind::Int64;
 use tch::nn::embedding;
 use tch::{nn, Device, Kind, Tensor};
-
-/// # GPT2 Pretrained model weight files
-pub struct Gpt2ModelResources;
-
-/// # GPT2 Pretrained model config files
-pub struct Gpt2ConfigResources;
-
-/// # GPT2 Pretrained model vocab files
-pub struct Gpt2VocabResources;
-
-/// # GPT2 Pretrained model merges files
-pub struct Gpt2MergesResources;
 
 impl Gpt2ModelResources {
     /// Shared under Modified MIT license by the OpenAI team at <https://github.com/openai/gpt-2/blob/master/LICENSE>. Modified with conversion to C-array format.
@@ -170,62 +169,6 @@ impl Gpt2MergesResources {
         "dialogpt-medium/merges",
         "https://huggingface.co/microsoft/DialoGPT-medium/resolve/main/merges.txt",
     );
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-/// # GPT2 model configuration
-/// Defines the GPT2 model architecture (e.g. number of layers, hidden layer size, vocab size...).
-/// Shared between GPT and GPT2 models
-pub struct Gpt2Config {
-    pub attn_pdrop: Option<f64>,
-    pub embd_pdrop: Option<f64>,
-    pub hidden_dropout_prob: Option<f64>,
-    pub afn: Option<Activation>,
-    pub initializer_range: f64,
-    pub layer_norm_epsilon: f64,
-    pub n_ctx: i64,
-    pub n_embd: i64,
-    pub n_head: i64,
-    pub n_layer: i64,
-    pub n_positions: i64,
-    pub num_labels: Option<i64>,
-    pub output_past: Option<bool>,
-    pub output_attentions: Option<bool>,
-    pub output_hidden_states: Option<bool>,
-    pub resid_pdrop: Option<f64>,
-    pub vocab_size: i64,
-    pub decoder_start_token_id: Option<i64>,
-    pub forced_bos_token_id: Option<i64>,
-    pub forced_eos_token_id: Option<i64>,
-}
-
-impl Config for Gpt2Config {}
-
-impl Default for Gpt2Config {
-    fn default() -> Self {
-        Gpt2Config {
-            attn_pdrop: Some(0.1),
-            embd_pdrop: Some(0.1),
-            hidden_dropout_prob: None,
-            afn: Some(Activation::gelu_new),
-            initializer_range: 0.02,
-            layer_norm_epsilon: 1e-5,
-            n_ctx: 1024,
-            n_embd: 768,
-            n_head: 12,
-            n_layer: 12,
-            n_positions: 0,
-            num_labels: None,
-            output_past: None,
-            output_attentions: None,
-            output_hidden_states: None,
-            resid_pdrop: Some(0.1),
-            vocab_size: 50257,
-            decoder_start_token_id: None,
-            forced_bos_token_id: None,
-            forced_eos_token_id: None,
-        }
-    }
 }
 
 /// # GPT2 Base model
@@ -645,10 +588,10 @@ impl GPT2Generator {
         tokenizer: TokenizerOption,
     ) -> Result<GPT2Generator, RustBertError> {
         let config_path = generate_config.config_resource.get_local_path()?;
-        let device = generate_config.device;
+        let device: tch::Device = generate_config.device.into();
 
         generate_config.validate();
-        let mut var_store = nn::VarStore::new(device);
+        let mut var_store = nn::VarStore::new(device.into());
 
         let config = Gpt2Config::from_file(config_path);
         let model = GPT2LMHeadModel::new(var_store.root(), &config);
@@ -656,7 +599,7 @@ impl GPT2Generator {
             &generate_config.model_resource,
             &mut var_store,
             generate_config.kind,
-            device,
+            device.into(),
         )?;
 
         let bos_token_id = tokenizer.get_bos_id();
@@ -690,9 +633,11 @@ impl PrivateLanguageGenerator for GPT2Generator {
     fn _get_tokenizer_mut(&mut self) -> &mut TokenizerOption {
         &mut self.tokenizer
     }
-    fn get_device(&self) -> Device {
-        self.var_store.device()
+    fn get_device(&self) -> crate::Device {
+        crate::Device::from(self.var_store.device())
     }
+    #[cfg(feature = "libtorch")]
+    #[cfg(feature = "libtorch")]
     fn get_var_store_mut(&mut self) -> Result<&mut nn::VarStore, RustBertError> {
         Ok(&mut self.var_store)
     }
@@ -723,60 +668,99 @@ impl PrivateLanguageGenerator for GPT2Generator {
 
     fn forward_t(
         &self,
-        input_ids: Option<&Tensor>,
+        input_ids: Option<&ndarray::Array2<i64>>,
         layer_past: Cache,
-        attention_mask: Option<&Tensor>,
-        token_type_ids: Option<&Tensor>,
-        position_ids: Option<&Tensor>,
-        input_embeds: Option<&Tensor>,
-        _encoder_outputs: Option<&Tensor>,
-        _decoder_input_ids: Option<&Tensor>,
+        attention_mask: Option<&ndarray::Array2<i64>>,
+        token_type_ids: Option<&ndarray::Array2<i64>>,
+        position_ids: Option<&ndarray::Array2<i64>>,
+        input_embeds: Option<&ndarray::ArrayD<f32>>,
+        _encoder_outputs: Option<&ndarray::ArrayD<f32>>,
+        _decoder_input_ids: Option<&ndarray::Array2<i64>>,
         train: bool,
-    ) -> Result<LMModelOutput, RustBertError> {
-        match layer_past {
+    ) -> Result<GeneratedLogits, RustBertError> {
+        #[cfg(feature = "libtorch")]
+        let (
+            input_ids,
+            attention_mask,
+            token_type_ids,
+            position_ids,
+            input_embeds,
+            encoder_outputs,
+            decoder_input_ids,
+        ) = (
+            option_array2_to_tensor(input_ids),
+            option_array2_to_tensor(attention_mask),
+            option_array2_to_tensor(token_type_ids),
+            option_array2_to_tensor(position_ids),
+            option_array2_to_tensor(_decoder_input_ids),
+            option_array_to_tensor_f32(input_embeds),
+            option_array_to_tensor_f32(_encoder_outputs),
+        );
+        #[cfg(not(feature = "libtorch"))]
+        let (_, _, _, _, _, _, _) = (
+            input_ids,
+            attention_mask,
+            token_type_ids,
+            position_ids,
+            input_embeds,
+            encoder_outputs,
+            decoder_input_ids,
+        );
+        let match_out = match layer_past {
             Cache::GPT2Cache(layer_past) => self.model.forward_t(
-                input_ids,
+                input_ids.as_ref(),
                 layer_past.as_ref(),
-                attention_mask,
-                token_type_ids,
-                position_ids,
-                input_embeds,
+                attention_mask.as_ref(),
+                token_type_ids.as_ref(),
+                position_ids.as_ref(),
+                input_embeds.as_ref(),
                 train,
             ),
             Cache::None => self.model.forward_t(
-                input_ids,
+                input_ids.as_ref(),
                 None,
-                attention_mask,
-                token_type_ids,
-                position_ids,
-                input_embeds,
+                attention_mask.as_ref(),
+                token_type_ids.as_ref(),
+                position_ids.as_ref(),
+                input_embeds.as_ref(),
                 train,
             ),
             _ => Err(RustBertError::ValueError(
                 "Cache not compatible with GPT2 Model".into(),
             )),
-        }
+        };
+        let output = match_out?;
+        Ok(GeneratedLogits {
+            lm_logits: crate::common::tensor_conversion::tensor_to_array_f32(&output.lm_logits)?,
+            cache: output.cache,
+        })
     }
 
     fn prepare_inputs_for_generation<'a>(
         &self,
-        input_ids: Tensor,
-        _encoder_outputs: Option<&'a Tensor>,
+        input_ids: ndarray::Array2<i64>,
+        _encoder_outputs: Option<&'a ArrayD<f32>>,
         past: Cache,
-        attention_mask: Tensor,
+        attention_mask: ndarray::Array2<i64>,
     ) -> PreparedInput<'a> {
-        let position_ids = (attention_mask.totype(Kind::Int64).cumsum(-1, Kind::Int64) - 1)
-            .masked_fill(&attention_mask.eq(0), 1);
+        let mut position_ids = ndarray::Array2::<i64>::zeros(attention_mask.raw_dim());
+        for row in 0..attention_mask.nrows() {
+            let mut cumulative = 0i64;
+            for col in 0..attention_mask.ncols() {
+                cumulative += attention_mask[[row, col]];
+                position_ids[[row, col]] = max(cumulative - 1, 1);
+            }
+        }
 
         match past {
             Cache::GPT2Cache(past) => {
                 if past.is_some() {
                     PreparedInput {
-                        prepared_input: Some(input_ids.select(1, -1).unsqueeze(-1)),
+                        prepared_input: Some(last_column(&input_ids)),
                         prepared_attention_mask: Some(attention_mask),
                         prepared_encoder_output: None,
                         prepared_decoder_input: None,
-                        prepared_position_ids: Some(position_ids.select(1, -1).unsqueeze(-1)),
+                        prepared_position_ids: Some(last_column(&position_ids)),
                         prepared_past: Cache::GPT2Cache(past),
                     }
                 } else {
@@ -805,14 +789,21 @@ impl PrivateLanguageGenerator for GPT2Generator {
     fn reorder_cache(
         &self,
         past: &mut Cache,
-        _encoder_outputs: Option<Tensor>,
-        beam_indices: &Tensor,
-    ) -> Option<Tensor> {
+        _encoder_outputs: Option<ArrayD<f32>>,
+        beam_indices: &[i64],
+    ) -> Option<ArrayD<f32>> {
+        #[cfg(feature = "libtorch")]
+        let beam_indices = Tensor::from_slice(beam_indices);
+        #[cfg(feature = "libtorch")]
+        let encoder_outputs_tensor = _encoder_outputs.map(|output| {
+            crate::common::tensor_conversion::array_to_tensor_f32(&output)
+                .expect("Error converting encoder output")
+        });
         match past {
             Cache::GPT2Cache(cached_decoder_state) => match cached_decoder_state {
                 Some(value) => {
                     for layer_past in value.iter_mut() {
-                        *layer_past = layer_past.index_select(1, beam_indices);
+                        *layer_past = layer_past.index_select(1, &beam_indices);
                     }
                     None
                 }

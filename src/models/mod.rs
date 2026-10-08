@@ -9,7 +9,6 @@ pub mod deberta_v2;
 pub mod distilbert;
 pub mod electra;
 pub mod fnet;
-#[cfg(feature = "libtorch")]
 pub mod gpt2;
 #[cfg(feature = "libtorch")]
 pub mod gpt_j;
@@ -18,11 +17,9 @@ pub mod gpt_neo;
 pub mod longformer;
 #[cfg(feature = "libtorch")]
 pub mod longt5;
-#[cfg(feature = "libtorch")]
 pub mod m2m_100;
 #[cfg(feature = "libtorch")]
 pub mod marian;
-#[cfg(feature = "libtorch")]
 pub mod mbart;
 pub mod mobilebert;
 #[cfg(feature = "libtorch")]

@@ -56,11 +56,17 @@
 //! # }
 //! ```
 
+#[cfg(feature = "libtorch")]
 pub(crate) mod attention;
+pub mod config;
+#[cfg(feature = "libtorch")]
+#[cfg(feature = "libtorch")]
 mod gpt2_model;
+#[cfg(feature = "libtorch")]
 pub(crate) mod transformer;
 
-pub use gpt2_model::{
-    GPT2Generator, GPT2LMHeadModel, Gpt2Config, Gpt2ConfigResources, Gpt2MergesResources,
-    Gpt2Model, Gpt2ModelOutput, Gpt2ModelResources, Gpt2VocabResources,
+pub use config::{
+    Gpt2Config, Gpt2ConfigResources, Gpt2MergesResources, Gpt2ModelResources, Gpt2VocabResources,
 };
+#[cfg(feature = "libtorch")]
+pub use gpt2_model::{GPT2Generator, GPT2LMHeadModel, Gpt2Model, Gpt2ModelOutput};

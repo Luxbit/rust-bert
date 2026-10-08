@@ -184,16 +184,14 @@ mod tests {
         Ok(())
     }
 
-    // The generation and translation pipelines are still tch-based; their ONNX
-    // tests require the `libtorch` feature until the generation stack is ported.
-    #[cfg(feature = "libtorch")]
+    #[cfg(feature = "onnx")]
     mod generation_tests {
         use rust_bert::m2m_100::{M2M100SourceLanguages, M2M100TargetLanguages};
         use rust_bert::pipelines::common::{ModelResource, ModelType, ONNXModelResources};
         use rust_bert::pipelines::text_generation::{TextGenerationConfig, TextGenerationModel};
         use rust_bert::pipelines::translation::{Language, TranslationConfig, TranslationModel};
         use rust_bert::resources::RemoteResource;
-        use tch::Device;
+        use rust_bert::Device;
         #[test]
         fn onnx_text_generation() -> anyhow::Result<()> {
             let text_generation_model = TextGenerationModel::new(TextGenerationConfig {

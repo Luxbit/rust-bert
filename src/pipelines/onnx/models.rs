@@ -1,30 +1,19 @@
 use crate::pipelines::common::{ConfigOption, TokenizerOption};
-#[cfg(feature = "libtorch")]
-use crate::pipelines::generation_utils::{Cache, GenerateConfig, LMModelOutput};
-#[cfg(feature = "libtorch")]
+use crate::pipelines::generation_utils::{Cache, GenerateConfig, GeneratedLogits};
 use crate::pipelines::onnx::config::ONNXEnvironmentConfig;
-#[cfg(feature = "libtorch")]
 use crate::pipelines::onnx::decoder::ONNXDecoder;
-#[cfg(feature = "libtorch")]
 use crate::pipelines::onnx::encoder::ONNXEncoder;
 use crate::{Config, RustBertError};
 
-#[cfg(feature = "libtorch")]
-use crate::common::tensor_conversion::{
-    array_to_tensor_f32, tensor_to_array_f32, tensor_to_array_i64, tensor_to_vec_i64,
-};
-#[cfg(feature = "libtorch")]
 use crate::pipelines::generation_utils::private_generation_utils::{
     PreparedInput, PrivateLanguageGenerator,
 };
-#[cfg(feature = "libtorch")]
 use crate::pipelines::generation_utils::LanguageGenerator;
 
-#[cfg(feature = "libtorch")]
-use ndarray::ArrayD;
-#[cfg(feature = "libtorch")]
+use ndarray::{Array2, ArrayD};
 use ort::session::SessionOutputs;
 use serde::{Deserialize, Serialize};
+use std::cmp::max;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,7 +49,6 @@ impl Config for ONNXModelConfig {}
 /// keys and values are available from the previous token generated, avoiding unnecessary re-computation).
 ///
 /// The recommended instantiation is done via the `new` and `new_with_tokenizer` methods.
-#[cfg(feature = "libtorch")]
 pub struct ONNXCausalGenerator {
     decoder_without_past: Option<ONNXDecoder>,
     decoder_with_past: Option<ONNXDecoder>,
@@ -78,7 +66,6 @@ pub struct ONNXCausalGenerator {
     use_past: bool,
 }
 
-#[cfg(feature = "libtorch")]
 impl ONNXCausalGenerator {
     /// Create a new `ONNXCausalGenerator` from a `GenerateConfig`.
     ///
@@ -303,7 +290,7 @@ impl ONNXCausalGenerator {
         encoder_attention_mask: Option<&ArrayD<i64>>,
         position_ids: Option<&ArrayD<i64>>,
         layer_states: Option<&Cache>,
-    ) -> Result<LMModelOutput, RustBertError> {
+    ) -> Result<GeneratedLogits, RustBertError> {
         match (
             &self.decoder_without_past,
             &self.decoder_with_past,
@@ -353,7 +340,6 @@ impl ONNXCausalGenerator {
     }
 }
 
-#[cfg(feature = "libtorch")]
 impl PrivateLanguageGenerator for ONNXCausalGenerator {
     fn _get_tokenizer(&self) -> &TokenizerOption {
         &self.tokenizer
@@ -361,9 +347,10 @@ impl PrivateLanguageGenerator for ONNXCausalGenerator {
     fn _get_tokenizer_mut(&mut self) -> &mut TokenizerOption {
         &mut self.tokenizer
     }
-    fn get_device(&self) -> tch::Device {
-        tch::Device::Cpu
+    fn get_device(&self) -> crate::Device {
+        crate::Device::Cpu
     }
+    #[cfg(feature = "libtorch")]
     fn get_var_store_mut(&mut self) -> Result<&mut tch::nn::VarStore, RustBertError> {
         Err(RustBertError::ValueError(
             "No VarStore available for ONNX models".to_string(),
@@ -402,51 +389,64 @@ impl PrivateLanguageGenerator for ONNXCausalGenerator {
 
     fn forward_t(
         &self,
-        input_ids: Option<&tch::Tensor>,
+        input_ids: Option<&Array2<i64>>,
         layer_past: Cache,
-        attention_mask: Option<&tch::Tensor>,
-        _token_type_ids: Option<&tch::Tensor>,
-        position_ids: Option<&tch::Tensor>,
-        _input_embeds: Option<&tch::Tensor>,
-        _encoder_outputs: Option<&tch::Tensor>,
-        _decoder_input_ids: Option<&tch::Tensor>,
+        attention_mask: Option<&Array2<i64>>,
+        _token_type_ids: Option<&Array2<i64>>,
+        position_ids: Option<&Array2<i64>>,
+        _input_embeds: Option<&ArrayD<f32>>,
+        _encoder_outputs: Option<&ArrayD<f32>>,
+        _decoder_input_ids: Option<&Array2<i64>>,
         _train: bool,
-    ) -> Result<LMModelOutput, RustBertError> {
-        let input_ids = input_ids.map(tensor_to_array_i64).transpose()?;
-        let attention_mask = attention_mask.map(tensor_to_array_i64).transpose()?;
-        let position_ids = position_ids.map(tensor_to_array_i64).transpose()?;
+    ) -> Result<GeneratedLogits, RustBertError> {
         self.forward(
-            input_ids.as_ref(),
-            attention_mask.as_ref(),
+            input_ids.map(|ids| ids.clone().into_dyn()).as_ref(),
+            attention_mask.map(|mask| mask.clone().into_dyn()).as_ref(),
             None,
             None,
-            position_ids.as_ref(),
+            position_ids.map(|ids| ids.clone().into_dyn()).as_ref(),
             Some(&layer_past),
         )
     }
 
     fn prepare_inputs_for_generation<'a>(
         &self,
-        input_ids: tch::Tensor,
-        _encoder_outputs: Option<&'a tch::Tensor>,
+        input_ids: ndarray::Array2<i64>,
+        _encoder_outputs: Option<&'a ArrayD<f32>>,
         past: Cache,
-        attention_mask: tch::Tensor,
+        attention_mask: ndarray::Array2<i64>,
     ) -> PreparedInput<'a> {
-        let position_ids = (attention_mask
-            .totype(tch::Kind::Int64)
-            .cumsum(-1, tch::Kind::Int64)
-            - 1)
-        .masked_fill(&attention_mask.eq(0), 1);
+        // position_ids: cumsum of the attention mask (minus 1), with padding positions set to 1
+        let mut position_ids = ndarray::Array2::<i64>::zeros(attention_mask.raw_dim());
+        for row in 0..attention_mask.nrows() {
+            let mut cumulative = 0i64;
+            for col in 0..attention_mask.ncols() {
+                cumulative += attention_mask[[row, col]];
+                position_ids[[row, col]] = max(cumulative - 1, 1);
+            }
+        }
 
         match (past, self.use_past) {
-            (Cache::ONNXCache(past), true) => PreparedInput {
-                prepared_input: Some(input_ids.select(1, -1).unsqueeze(-1)),
-                prepared_attention_mask: Some(attention_mask),
-                prepared_encoder_output: None,
-                prepared_decoder_input: None,
-                prepared_position_ids: Some(position_ids.select(1, -1).unsqueeze(-1)),
-                prepared_past: Cache::ONNXCache(past),
-            },
+            (Cache::ONNXCache(past), true) => {
+                let last_input_column: Array2<i64> = ndarray::Array2::from_shape_vec(
+                    (input_ids.nrows(), 1),
+                    input_ids.column(input_ids.ncols() - 1).to_vec(),
+                )
+                .unwrap();
+                let last_position_column: Array2<i64> = ndarray::Array2::from_shape_vec(
+                    (position_ids.nrows(), 1),
+                    position_ids.column(position_ids.ncols() - 1).to_vec(),
+                )
+                .unwrap();
+                PreparedInput {
+                    prepared_input: Some(last_input_column),
+                    prepared_attention_mask: Some(attention_mask),
+                    prepared_encoder_output: None,
+                    prepared_decoder_input: None,
+                    prepared_position_ids: Some(last_position_column),
+                    prepared_past: Cache::ONNXCache(past),
+                }
+            }
             _ => PreparedInput {
                 prepared_input: Some(input_ids),
                 prepared_attention_mask: Some(attention_mask),
@@ -461,14 +461,13 @@ impl PrivateLanguageGenerator for ONNXCausalGenerator {
     fn reorder_cache(
         &self,
         past: &mut Cache,
-        _encoder_outputs: Option<tch::Tensor>,
-        beam_indices: &tch::Tensor,
-    ) -> Option<tch::Tensor> {
-        let beam_indices = tensor_to_vec_i64(beam_indices).expect("Error converting beam indices");
+        _encoder_outputs: Option<ArrayD<f32>>,
+        beam_indices: &[i64],
+    ) -> Option<ArrayD<f32>> {
         match past {
             Cache::ONNXCache(cached_decoder_state) => {
                 for layer_past in cached_decoder_state.values.values_mut() {
-                    *layer_past = crate::common::tensor_ops::gather_rows(layer_past, &beam_indices);
+                    *layer_past = crate::common::tensor_ops::gather_rows(layer_past, beam_indices);
                 }
                 None
             }
@@ -480,7 +479,6 @@ impl PrivateLanguageGenerator for ONNXCausalGenerator {
     }
 }
 
-#[cfg(feature = "libtorch")]
 impl LanguageGenerator for ONNXCausalGenerator {}
 
 /// # ONNX Conditional Generator
@@ -490,7 +488,6 @@ impl LanguageGenerator for ONNXCausalGenerator {}
 /// keys and values are available from the previous token generated, avoiding unnecessary re-computation).
 ///
 /// The recommended instantiation is done via the `new` and `new_with_tokenizer` methods.
-#[cfg(feature = "libtorch")]
 pub struct ONNXConditionalGenerator {
     encoder: ONNXEncoder,
     decoder_without_past: Option<ONNXDecoder>,
@@ -509,7 +506,6 @@ pub struct ONNXConditionalGenerator {
     use_past: bool,
 }
 
-#[cfg(feature = "libtorch")]
 impl ONNXConditionalGenerator {
     /// Create a new `ONNXConditionalGenerator` from a `GenerateConfig`.
     ///
@@ -745,7 +741,7 @@ impl ONNXConditionalGenerator {
         encoder_attention_mask: Option<&ArrayD<i64>>,
         decoder_input_ids: Option<&ArrayD<i64>>,
         layer_states: Option<&Cache>,
-    ) -> Result<LMModelOutput, RustBertError> {
+    ) -> Result<GeneratedLogits, RustBertError> {
         let calc_encoder_output = if encoder_hidden_states.is_none() {
             Some(
                 self.encoder
@@ -820,7 +816,6 @@ impl ONNXConditionalGenerator {
     }
 }
 
-#[cfg(feature = "libtorch")]
 impl PrivateLanguageGenerator for ONNXConditionalGenerator {
     fn _get_tokenizer(&self) -> &TokenizerOption {
         &self.tokenizer
@@ -828,9 +823,10 @@ impl PrivateLanguageGenerator for ONNXConditionalGenerator {
     fn _get_tokenizer_mut(&mut self) -> &mut TokenizerOption {
         &mut self.tokenizer
     }
-    fn get_device(&self) -> tch::Device {
-        tch::Device::Cpu
+    fn get_device(&self) -> crate::Device {
+        crate::Device::Cpu
     }
+    #[cfg(feature = "libtorch")]
     fn get_var_store_mut(&mut self) -> Result<&mut tch::nn::VarStore, RustBertError> {
         Err(RustBertError::ValueError(
             "No VarStore available for ONNX models".to_string(),
@@ -869,57 +865,62 @@ impl PrivateLanguageGenerator for ONNXConditionalGenerator {
 
     fn forward_t(
         &self,
-        input_ids: Option<&tch::Tensor>,
+        input_ids: Option<&Array2<i64>>,
         layer_past: Cache,
-        attention_mask: Option<&tch::Tensor>,
-        _token_type_ids: Option<&tch::Tensor>,
-        _position_ids: Option<&tch::Tensor>,
-        _input_embeds: Option<&tch::Tensor>,
-        encoder_outputs: Option<&tch::Tensor>,
-        decoder_input_ids: Option<&tch::Tensor>,
+        attention_mask: Option<&Array2<i64>>,
+        _token_type_ids: Option<&Array2<i64>>,
+        _position_ids: Option<&Array2<i64>>,
+        _input_embeds: Option<&ArrayD<f32>>,
+        encoder_outputs: Option<&ArrayD<f32>>,
+        decoder_input_ids: Option<&Array2<i64>>,
         _train: bool,
-    ) -> Result<LMModelOutput, RustBertError> {
-        let input_ids = input_ids.map(tensor_to_array_i64).transpose()?;
-        let attention_mask = attention_mask.map(tensor_to_array_i64).transpose()?;
-        let encoder_outputs = encoder_outputs.map(tensor_to_array_f32).transpose()?;
-        let decoder_input_ids = decoder_input_ids.map(tensor_to_array_i64).transpose()?;
+    ) -> Result<GeneratedLogits, RustBertError> {
         self.forward(
-            input_ids.as_ref(),
-            attention_mask.as_ref(),
-            encoder_outputs.as_ref(),
+            input_ids.map(|ids| ids.clone().into_dyn()).as_ref(),
+            attention_mask.map(|mask| mask.clone().into_dyn()).as_ref(),
+            encoder_outputs,
             None,
-            decoder_input_ids.as_ref(),
+            decoder_input_ids.map(|ids| ids.clone().into_dyn()).as_ref(),
             Some(&layer_past),
         )
     }
 
     fn encode(
         &self,
-        input_ids: &tch::Tensor,
-        attention_mask: Option<&tch::Tensor>,
-    ) -> Option<tch::Tensor> {
-        let input_ids = tensor_to_array_i64(input_ids).ok()?;
-        let attention_mask = attention_mask.map(tensor_to_array_i64).transpose().ok()?;
+        input_ids: &Array2<i64>,
+        attention_mask: Option<&Array2<i64>>,
+    ) -> Option<ArrayD<f32>> {
         self.encoder
-            .forward(Some(&input_ids), attention_mask.as_ref(), None, None, None)
+            .forward(
+                Some(&input_ids.clone().into_dyn()),
+                attention_mask.map(|mask| mask.clone().into_dyn()).as_ref(),
+                None,
+                None,
+                None,
+            )
             .ok()?
             .last_hidden_state
-            .map(|array| array_to_tensor_f32(&array).expect("Error converting encoder output"))
     }
 
     fn prepare_inputs_for_generation<'a>(
         &self,
-        input_ids: tch::Tensor,
-        encoder_outputs: Option<&'a tch::Tensor>,
+        input_ids: ndarray::Array2<i64>,
+        encoder_outputs: Option<&'a ArrayD<f32>>,
         past: Cache,
-        attention_mask: tch::Tensor,
+        attention_mask: ndarray::Array2<i64>,
     ) -> PreparedInput<'a> {
         match (past, self.use_past) {
             (Cache::ONNXCache(past), true) => PreparedInput {
                 prepared_input: None,
                 prepared_attention_mask: Some(attention_mask),
                 prepared_encoder_output: encoder_outputs,
-                prepared_decoder_input: Some(input_ids.narrow(1, -1, 1)),
+                prepared_decoder_input: Some(
+                    ndarray::Array2::from_shape_vec(
+                        (input_ids.nrows(), 1),
+                        input_ids.column(input_ids.ncols() - 1).to_vec(),
+                    )
+                    .unwrap(),
+                ),
                 prepared_position_ids: None,
                 prepared_past: Cache::ONNXCache(past),
             },
@@ -937,17 +938,15 @@ impl PrivateLanguageGenerator for ONNXConditionalGenerator {
     fn reorder_cache(
         &self,
         past: &mut Cache,
-        encoder_outputs: Option<tch::Tensor>,
-        beam_indices: &tch::Tensor,
-    ) -> Option<tch::Tensor> {
-        let beam_indices = tensor_to_vec_i64(beam_indices).expect("Error converting beam indices");
-        let beam_indices_tensor = tch::Tensor::from_slice(&beam_indices);
-        let encoder_outputs =
-            encoder_outputs.map(|value| value.index_select(0, &beam_indices_tensor));
+        encoder_outputs: Option<ArrayD<f32>>,
+        beam_indices: &[i64],
+    ) -> Option<ArrayD<f32>> {
+        let encoder_outputs = encoder_outputs
+            .map(|value| crate::common::tensor_ops::gather_rows(&value, beam_indices));
         match past {
             Cache::ONNXCache(cached_decoder_state) => {
                 for layer_past in cached_decoder_state.values.values_mut() {
-                    *layer_past = crate::common::tensor_ops::gather_rows(layer_past, &beam_indices);
+                    *layer_past = crate::common::tensor_ops::gather_rows(layer_past, beam_indices);
                 }
             }
             Cache::None => {}
@@ -959,17 +958,14 @@ impl PrivateLanguageGenerator for ONNXConditionalGenerator {
     }
 }
 
-#[cfg(feature = "libtorch")]
 impl LanguageGenerator for ONNXConditionalGenerator {}
 
-#[cfg(feature = "libtorch")]
 #[derive(Debug)]
 /// Container used to store key-value cached states for efficient decoding.
 pub struct ONNXLayerCache {
     pub values: HashMap<String, ArrayD<f32>>,
 }
 
-#[cfg(feature = "libtorch")]
 impl ONNXLayerCache {
     /// Helper function to create a cache layer from an ONNX model output.
     /// Assumes that the output names for cached keys and values contain `key` and `value` in their name, respectively.

@@ -18,7 +18,11 @@ use crate::pipelines::common::{ModelType, TokenizerOption};
 use crate::pipelines::generation_utils::private_generation_utils::{
     PreparedInput, PrivateLanguageGenerator,
 };
-use crate::pipelines::generation_utils::{Cache, GenerateConfig, LMModelOutput, LanguageGenerator};
+use crate::pipelines::generation_utils::LMModelOutput;
+use crate::pipelines::generation_utils::{option_array2_to_tensor, option_array_to_tensor_f32};
+use crate::pipelines::generation_utils::{
+    Cache, GenerateConfig, GeneratedLogits, LanguageGenerator,
+};
 use crate::xlnet::attention::LayerState;
 pub use crate::xlnet::config::{
     AttentionType, XLNetConfig, XLNetConfigResources, XLNetModelResources, XLNetVocabResources,
@@ -28,6 +32,7 @@ use crate::{Config, RustBertError};
 use serde::{Deserialize, Serialize};
 use std::borrow::{Borrow, BorrowMut};
 
+use ndarray::ArrayD;
 use tch::nn::Init;
 use tch::{nn, Device, Kind, Tensor};
 
@@ -1429,9 +1434,10 @@ impl XLNetGenerator {
         tokenizer: TokenizerOption,
     ) -> Result<XLNetGenerator, RustBertError> {
         let config_path = generate_config.config_resource.get_local_path()?;
-        let device = generate_config.device;
+        let device: tch::Device = generate_config.device.into();
 
         generate_config.validate();
+        let device: tch::Device = device.into();
         let mut var_store = nn::VarStore::new(device);
 
         let config = XLNetConfig::from_file(config_path);
@@ -1440,7 +1446,7 @@ impl XLNetGenerator {
             &generate_config.model_resource,
             &mut var_store,
             generate_config.kind,
-            device,
+            device.into(),
         )?;
 
         let bos_token_id = Some(config.bos_token_id);
@@ -1475,9 +1481,10 @@ impl PrivateLanguageGenerator for XLNetGenerator {
     fn _get_tokenizer_mut(&mut self) -> &mut TokenizerOption {
         &mut self.tokenizer
     }
-    fn get_device(&self) -> Device {
-        self.var_store.device()
+    fn get_device(&self) -> crate::Device {
+        crate::Device::from(self.var_store.device())
     }
+    #[cfg(feature = "libtorch")]
     fn get_var_store_mut(&mut self) -> Result<&mut nn::VarStore, RustBertError> {
         Ok(&mut self.var_store)
     }
@@ -1509,35 +1516,63 @@ impl PrivateLanguageGenerator for XLNetGenerator {
 
     fn forward_t(
         &self,
-        input_ids: Option<&Tensor>,
+        input_ids: Option<&ndarray::Array2<i64>>,
         layer_past: Cache,
-        attention_mask: Option<&Tensor>,
-        _token_type_ids: Option<&Tensor>,
-        _position_ids: Option<&Tensor>,
-        _input_embeds: Option<&Tensor>,
-        _encoder_outputs: Option<&Tensor>,
-        decoder_input_ids: Option<&Tensor>,
+        attention_mask: Option<&ndarray::Array2<i64>>,
+        _token_type_ids: Option<&ndarray::Array2<i64>>,
+        _position_ids: Option<&ndarray::Array2<i64>>,
+        _input_embeds: Option<&ArrayD<f32>>,
+        _encoder_outputs: Option<&ArrayD<f32>>,
+        decoder_input_ids: Option<&ndarray::Array2<i64>>,
         train: bool,
-    ) -> Result<LMModelOutput, RustBertError> {
-        match layer_past {
+    ) -> Result<GeneratedLogits, RustBertError> {
+        #[cfg(feature = "libtorch")]
+        let (
+            input_ids,
+            attention_mask,
+            token_type_ids,
+            position_ids,
+            input_embeds,
+            encoder_outputs,
+            decoder_input_ids,
+        ) = (
+            option_array2_to_tensor(input_ids),
+            option_array2_to_tensor(attention_mask),
+            option_array2_to_tensor(_token_type_ids),
+            option_array2_to_tensor(_position_ids),
+            option_array2_to_tensor(decoder_input_ids),
+            option_array_to_tensor_f32(_input_embeds),
+            option_array_to_tensor_f32(_encoder_outputs),
+        );
+        #[cfg(not(feature = "libtorch"))]
+        let (_, _, _, _, _, _, _) = (
+            input_ids,
+            attention_mask,
+            token_type_ids,
+            position_ids,
+            input_embeds,
+            encoder_outputs,
+            decoder_input_ids,
+        );
+        let match_out = match layer_past {
             Cache::XLNetCache(layer_past) => self.model.forward_t(
-                input_ids,
+                input_ids.as_ref(),
                 None,
                 layer_past,
-                attention_mask,
+                attention_mask.as_ref(),
                 // For XLNet the decoder_input_ids are used as a placeholder for the target mapping
-                decoder_input_ids,
+                decoder_input_ids.as_ref(),
                 None,
                 None,
                 train,
             ),
             Cache::None => self.model.forward_t(
-                input_ids,
+                input_ids.as_ref(),
                 None,
                 None,
-                attention_mask,
+                attention_mask.as_ref(),
                 // For XLNet the decoder_input_ids are used as a placeholder for the target mapping
-                decoder_input_ids,
+                decoder_input_ids.as_ref(),
                 None,
                 None,
                 train,
@@ -1545,16 +1580,26 @@ impl PrivateLanguageGenerator for XLNetGenerator {
             _ => Err(RustBertError::ValueError(
                 "Cache not compatible with XLNet Model".into(),
             )),
-        }
+        };
+        let output = match_out?;
+        Ok(GeneratedLogits {
+            lm_logits: crate::common::tensor_conversion::tensor_to_array_f32(&output.lm_logits)?,
+            cache: output.cache,
+        })
     }
 
     fn prepare_inputs_for_generation<'a>(
         &self,
-        input_ids: Tensor,
-        _encoder_outputs: Option<&'a Tensor>,
+        input_ids: ndarray::Array2<i64>,
+        _encoder_outputs: Option<&'a ArrayD<f32>>,
         past: Cache,
-        _attention_mask: Tensor,
+        _attention_mask: ndarray::Array2<i64>,
     ) -> PreparedInput<'a> {
+        #[cfg(feature = "libtorch")]
+        let input_ids = option_array2_to_tensor(Some(&input_ids)).unwrap();
+        #[cfg(feature = "libtorch")]
+        let _attention_mask = option_array2_to_tensor(Some(&_attention_mask)).unwrap();
+        #[cfg(feature = "libtorch")]
         let effective_batch_size = input_ids.size()[0];
         let sequence_length = input_ids.size()[1];
         let dummy_token =
@@ -1609,29 +1654,74 @@ impl PrivateLanguageGenerator for XLNetGenerator {
                         past
                     };
                     PreparedInput {
-                        prepared_input: Some(input_ids),
-                        prepared_attention_mask: Some(perm_mask),
+                        prepared_input: Some(
+                            crate::common::tensor_conversion::tensor_to_array_i64(&input_ids)
+                                .unwrap()
+                                .into_dimensionality::<ndarray::Ix2>()
+                                .unwrap(),
+                        ),
+                        prepared_attention_mask: Some(
+                            crate::common::tensor_conversion::tensor_to_array_i64(&perm_mask)
+                                .unwrap()
+                                .into_dimensionality::<ndarray::Ix2>()
+                                .unwrap(),
+                        ),
                         prepared_encoder_output: None,
-                        prepared_decoder_input: Some(target_mapping),
+                        prepared_decoder_input: Some(
+                            crate::common::tensor_conversion::tensor_to_array_i64(&target_mapping)
+                                .unwrap()
+                                .into_dimensionality::<ndarray::Ix2>()
+                                .unwrap(),
+                        ),
                         prepared_position_ids: None,
                         prepared_past: Cache::XLNetCache(Some(past)),
                     }
                 } else {
                     PreparedInput {
-                        prepared_input: Some(input_ids),
-                        prepared_attention_mask: Some(perm_mask),
+                        prepared_input: Some(
+                            crate::common::tensor_conversion::tensor_to_array_i64(&input_ids)
+                                .unwrap()
+                                .into_dimensionality::<ndarray::Ix2>()
+                                .unwrap(),
+                        ),
+                        prepared_attention_mask: Some(
+                            crate::common::tensor_conversion::tensor_to_array_i64(&perm_mask)
+                                .unwrap()
+                                .into_dimensionality::<ndarray::Ix2>()
+                                .unwrap(),
+                        ),
                         prepared_encoder_output: None,
-                        prepared_decoder_input: Some(target_mapping),
+                        prepared_decoder_input: Some(
+                            crate::common::tensor_conversion::tensor_to_array_i64(&target_mapping)
+                                .unwrap()
+                                .into_dimensionality::<ndarray::Ix2>()
+                                .unwrap(),
+                        ),
                         prepared_position_ids: None,
                         prepared_past: Cache::XLNetCache(None),
                     }
                 }
             }
             Cache::None => PreparedInput {
-                prepared_input: Some(input_ids),
-                prepared_attention_mask: Some(perm_mask),
+                prepared_input: Some(
+                    crate::common::tensor_conversion::tensor_to_array_i64(&input_ids)
+                        .unwrap()
+                        .into_dimensionality::<ndarray::Ix2>()
+                        .unwrap(),
+                ),
+                prepared_attention_mask: Some(
+                    crate::common::tensor_conversion::tensor_to_array_i64(&perm_mask)
+                        .unwrap()
+                        .into_dimensionality::<ndarray::Ix2>()
+                        .unwrap(),
+                ),
                 prepared_encoder_output: None,
-                prepared_decoder_input: Some(target_mapping),
+                prepared_decoder_input: Some(
+                    crate::common::tensor_conversion::tensor_to_array_i64(&target_mapping)
+                        .unwrap()
+                        .into_dimensionality::<ndarray::Ix2>()
+                        .unwrap(),
+                ),
                 prepared_position_ids: None,
                 prepared_past: Cache::XLNetCache(None),
             },
@@ -1642,25 +1732,36 @@ impl PrivateLanguageGenerator for XLNetGenerator {
     fn reorder_cache(
         &self,
         past: &mut Cache,
-        _encoder_outputs: Option<Tensor>,
-        beam_indices: &Tensor,
-    ) -> Option<Tensor> {
-        match past {
-            Cache::XLNetCache(old_cache_option) => match old_cache_option {
-                Some(old_cache) => {
-                    for layer_state in old_cache.iter_mut() {
-                        if layer_state.is_some() {
-                            layer_state.as_mut().unwrap().reorder_cache(beam_indices)
-                        };
+        _encoder_outputs: Option<ArrayD<f32>>,
+        beam_indices: &[i64],
+    ) -> Option<ArrayD<f32>> {
+        #[cfg(feature = "libtorch")]
+        {
+            let beam_indices_tensor = tch::Tensor::from_slice(beam_indices);
+            match past {
+                Cache::XLNetCache(old_cache_option) => match old_cache_option {
+                    Some(old_cache) => {
+                        for layer_state in old_cache.iter_mut() {
+                            if layer_state.is_some() {
+                                layer_state
+                                    .as_mut()
+                                    .unwrap()
+                                    .reorder_cache(&beam_indices_tensor)
+                            };
+                        }
+                        None
                     }
-                    None
+                    None => None,
+                },
+                Cache::None => None,
+                _ => {
+                    panic!("Invalid cache for XLNet model");
                 }
-                None => None,
-            },
-            Cache::None => None,
-            _ => {
-                panic!("Invalid cache for XLNet model");
             }
+        }
+        #[cfg(not(feature = "libtorch"))]
+        {
+            None
         }
     }
 }

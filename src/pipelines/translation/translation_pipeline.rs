@@ -11,19 +11,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use tch::{Device, Kind};
+use crate::Device;
+#[cfg(feature = "libtorch")]
+use tch::Kind;
 
+#[cfg(feature = "libtorch")]
+mod torch_models {
+    pub use crate::m2m_100::M2M100Generator;
+    pub use crate::marian::MarianGenerator;
+    pub use crate::mbart::MBartGenerator;
+    pub use crate::nllb::NLLBGenerator;
+    pub use crate::t5::T5Generator;
+}
 use crate::common::error::RustBertError;
-use crate::m2m_100::M2M100Generator;
-use crate::marian::MarianGenerator;
-use crate::mbart::MBartGenerator;
-use crate::nllb::NLLBGenerator;
 use crate::pipelines::common::{ModelResource, ModelType, TokenizerOption};
 use crate::pipelines::generation_utils::{GenerateConfig, GenerateOptions, LanguageGenerator};
 #[cfg(feature = "onnx")]
 use crate::pipelines::onnx::ONNXConditionalGenerator;
 use crate::resources::ResourceProvider;
-use crate::t5::T5Generator;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fmt;
@@ -978,7 +983,8 @@ pub struct TranslationConfig {
     pub num_beam_groups: Option<i64>,
     /// Diversity penalty for diverse beam search. High values will enforce more difference between beam groups (default: 5.5)
     pub diversity_penalty: Option<f64>,
-    /// Model weights precision. If not provided, will default to full precision on CPU, or the loaded weights precision otherwise
+    /// Model weights precision (LibTorch backend only). If not provided, will default to full precision on CPU, or the loaded weights precision otherwise
+    #[cfg(feature = "libtorch")]
     pub kind: Option<Kind>,
 }
 
@@ -1067,6 +1073,7 @@ impl TranslationConfig {
             num_return_sequences: 1,
             num_beam_groups: None,
             diversity_penalty: None,
+            #[cfg(feature = "libtorch")]
             kind: None,
         }
     }
@@ -1095,6 +1102,7 @@ impl From<TranslationConfig> for GenerateConfig {
             num_beam_groups: config.num_beam_groups,
             diversity_penalty: config.diversity_penalty,
             device: config.device,
+            #[cfg(feature = "libtorch")]
             kind: config.kind,
         }
     }
@@ -1104,15 +1112,20 @@ impl From<TranslationConfig> for GenerateConfig {
 /// # Abstraction that holds one particular translation model, for any of the supported models
 pub enum TranslationOption {
     /// Translator based on Marian model
-    Marian(MarianGenerator),
+    #[cfg(feature = "libtorch")]
+    Marian(torch_models::MarianGenerator),
     /// Translator based on T5 model
-    T5(T5Generator),
+    #[cfg(feature = "libtorch")]
+    T5(torch_models::T5Generator),
     /// Translator based on MBart50 model
-    MBart(MBartGenerator),
+    #[cfg(feature = "libtorch")]
+    MBart(torch_models::MBartGenerator),
     /// Translator based on M2M100 model
-    M2M100(M2M100Generator),
+    #[cfg(feature = "libtorch")]
+    M2M100(torch_models::M2M100Generator),
     /// Translator based on NLLB model
-    NLLB(NLLBGenerator),
+    #[cfg(feature = "libtorch")]
+    NLLB(torch_models::NLLBGenerator),
     /// Translator based on ONNX model
     #[cfg(feature = "onnx")]
     ONNX(ONNXConditionalGenerator),
@@ -1125,17 +1138,26 @@ impl TranslationOption {
             (_, &ModelResource::ONNX(_)) => Ok(TranslationOption::ONNX(
                 ONNXConditionalGenerator::new(config.into(), None)?,
             )),
-            (ModelType::Marian, _) => Ok(TranslationOption::Marian(MarianGenerator::new(
+            #[cfg(feature = "libtorch")]
+            (ModelType::Marian, _) => Ok(TranslationOption::Marian(
+                torch_models::MarianGenerator::new(config.into())?,
+            )),
+            #[cfg(feature = "libtorch")]
+            (ModelType::T5, _) => Ok(TranslationOption::T5(torch_models::T5Generator::new(
                 config.into(),
             )?)),
-            (ModelType::T5, _) => Ok(TranslationOption::T5(T5Generator::new(config.into())?)),
-            (ModelType::MBart, _) => Ok(TranslationOption::MBart(MBartGenerator::new(
+            #[cfg(feature = "libtorch")]
+            (ModelType::MBart, _) => Ok(TranslationOption::MBart(
+                torch_models::MBartGenerator::new(config.into())?,
+            )),
+            #[cfg(feature = "libtorch")]
+            (ModelType::M2M100, _) => Ok(TranslationOption::M2M100(
+                torch_models::M2M100Generator::new(config.into())?,
+            )),
+            #[cfg(feature = "libtorch")]
+            (ModelType::NLLB, _) => Ok(TranslationOption::NLLB(torch_models::NLLBGenerator::new(
                 config.into(),
             )?)),
-            (ModelType::M2M100, _) => Ok(TranslationOption::M2M100(M2M100Generator::new(
-                config.into(),
-            )?)),
-            (ModelType::NLLB, _) => Ok(TranslationOption::NLLB(NLLBGenerator::new(config.into())?)),
             _ => Err(RustBertError::InvalidConfigurationError(format!(
                 "Translation not implemented for {:?}!",
                 config.model_type
@@ -1152,23 +1174,26 @@ impl TranslationOption {
             (_, &ModelResource::ONNX(_)) => Ok(TranslationOption::ONNX(
                 ONNXConditionalGenerator::new_with_tokenizer(config.into(), tokenizer, None)?,
             )),
+            #[cfg(feature = "libtorch")]
             (ModelType::Marian, _) => Ok(TranslationOption::Marian(
-                MarianGenerator::new_with_tokenizer(config.into(), tokenizer)?,
+                torch_models::MarianGenerator::new_with_tokenizer(config.into(), tokenizer)?,
             )),
-            (ModelType::T5, _) => Ok(TranslationOption::T5(T5Generator::new_with_tokenizer(
-                config.into(),
-                tokenizer,
-            )?)),
+            #[cfg(feature = "libtorch")]
+            (ModelType::T5, _) => Ok(TranslationOption::T5(
+                torch_models::T5Generator::new_with_tokenizer(config.into(), tokenizer)?,
+            )),
+            #[cfg(feature = "libtorch")]
             (ModelType::MBart, _) => Ok(TranslationOption::MBart(
-                MBartGenerator::new_with_tokenizer(config.into(), tokenizer)?,
+                torch_models::MBartGenerator::new_with_tokenizer(config.into(), tokenizer)?,
             )),
+            #[cfg(feature = "libtorch")]
             (ModelType::M2M100, _) => Ok(TranslationOption::M2M100(
-                M2M100Generator::new_with_tokenizer(config.into(), tokenizer)?,
+                torch_models::M2M100Generator::new_with_tokenizer(config.into(), tokenizer)?,
             )),
-            (ModelType::NLLB, _) => Ok(TranslationOption::NLLB(NLLBGenerator::new_with_tokenizer(
-                config.into(),
-                tokenizer,
-            )?)),
+            #[cfg(feature = "libtorch")]
+            (ModelType::NLLB, _) => Ok(TranslationOption::NLLB(
+                torch_models::NLLBGenerator::new_with_tokenizer(config.into(), tokenizer)?,
+            )),
             _ => Err(RustBertError::InvalidConfigurationError(format!(
                 "Translation not implemented for {:?}!",
                 config.model_type
@@ -1179,10 +1204,15 @@ impl TranslationOption {
     /// Returns the `ModelType` for this TranslationOption
     pub fn model_type(&self) -> ModelType {
         match *self {
+            #[cfg(feature = "libtorch")]
             Self::Marian(_) => ModelType::Marian,
+            #[cfg(feature = "libtorch")]
             Self::T5(_) => ModelType::T5,
+            #[cfg(feature = "libtorch")]
             Self::MBart(_) => ModelType::MBart,
+            #[cfg(feature = "libtorch")]
             Self::M2M100(_) => ModelType::M2M100,
+            #[cfg(feature = "libtorch")]
             Self::NLLB(_) => ModelType::NLLB,
             #[cfg(feature = "onnx")]
             Self::ONNX(_) => ModelType::ONNX,
@@ -1192,10 +1222,15 @@ impl TranslationOption {
     /// Returns the `Tokenizer` for this TranslationOption
     pub fn get_tokenizer(&self) -> &TokenizerOption {
         match self {
+            #[cfg(feature = "libtorch")]
             Self::Marian(ref generator) => generator.get_tokenizer(),
+            #[cfg(feature = "libtorch")]
             Self::T5(ref generator) => generator.get_tokenizer(),
+            #[cfg(feature = "libtorch")]
             Self::MBart(ref generator) => generator.get_tokenizer(),
+            #[cfg(feature = "libtorch")]
             Self::M2M100(ref generator) => generator.get_tokenizer(),
+            #[cfg(feature = "libtorch")]
             Self::NLLB(ref generator) => generator.get_tokenizer(),
             #[cfg(feature = "onnx")]
             Self::ONNX(ref generator) => generator.get_tokenizer(),
@@ -1205,10 +1240,15 @@ impl TranslationOption {
     /// Interface method to access tokenizer
     pub fn get_tokenizer_mut(&mut self) -> &mut TokenizerOption {
         match self {
+            #[cfg(feature = "libtorch")]
             Self::Marian(model_ref) => model_ref.get_tokenizer_mut(),
+            #[cfg(feature = "libtorch")]
             Self::T5(model_ref) => model_ref.get_tokenizer_mut(),
+            #[cfg(feature = "libtorch")]
             Self::MBart(model_ref) => model_ref.get_tokenizer_mut(),
+            #[cfg(feature = "libtorch")]
             Self::M2M100(model_ref) => model_ref.get_tokenizer_mut(),
+            #[cfg(feature = "libtorch")]
             Self::NLLB(model_ref) => model_ref.get_tokenizer_mut(),
             #[cfg(feature = "onnx")]
             Self::ONNX(model_ref) => model_ref.get_tokenizer_mut(),
@@ -1224,16 +1264,19 @@ impl TranslationOption {
         S: AsRef<str> + Send + Sync,
     {
         Ok(match *self {
+            #[cfg(feature = "libtorch")]
             Self::Marian(ref model) => model
                 .generate(prompt_texts, None)?
                 .into_iter()
                 .map(|output| output.text)
                 .collect(),
+            #[cfg(feature = "libtorch")]
             Self::T5(ref model) => model
                 .generate(prompt_texts, None)?
                 .into_iter()
                 .map(|output| output.text)
                 .collect(),
+            #[cfg(feature = "libtorch")]
             Self::MBart(ref model) => {
                 let generate_options = GenerateOptions {
                     forced_bos_token_id,
@@ -1245,6 +1288,7 @@ impl TranslationOption {
                     .map(|output| output.text)
                     .collect()
             }
+            #[cfg(feature = "libtorch")]
             Self::M2M100(ref model) | Self::NLLB(ref model) => {
                 let generate_options = GenerateOptions {
                     forced_bos_token_id,
