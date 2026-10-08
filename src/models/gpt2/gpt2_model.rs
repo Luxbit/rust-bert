@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::common::activations::Activation;
 use crate::common::dropout::Dropout;
 use crate::common::embeddings::process_ids_embeddings_pair;
 pub use crate::gpt2::config::{
@@ -32,12 +31,11 @@ use crate::pipelines::generation_utils::{
 };
 use crate::{Config, RustBertError};
 use ndarray::ArrayD;
-use serde::{Deserialize, Serialize};
 use std::borrow::{Borrow, BorrowMut};
-use std::cmp::{max, min};
+use std::cmp::max;
 use tch::kind::Kind::Int64;
 use tch::nn::embedding;
-use tch::{nn, Device, Kind, Tensor};
+use tch::{nn, Tensor};
 
 impl Gpt2ModelResources {
     /// Shared under Modified MIT license by the OpenAI team at <https://github.com/openai/gpt-2/blob/master/LICENSE>. Modified with conversion to C-array format.
@@ -591,7 +589,7 @@ impl GPT2Generator {
         let device: tch::Device = generate_config.device.into();
 
         generate_config.validate();
-        let mut var_store = nn::VarStore::new(device.into());
+        let mut var_store = nn::VarStore::new(device);
 
         let config = Gpt2Config::from_file(config_path);
         let model = GPT2LMHeadModel::new(var_store.root(), &config);
@@ -599,7 +597,7 @@ impl GPT2Generator {
             &generate_config.model_resource,
             &mut var_store,
             generate_config.kind,
-            device.into(),
+            device,
         )?;
 
         let bos_token_id = tokenizer.get_bos_id();
@@ -685,8 +683,8 @@ impl PrivateLanguageGenerator for GPT2Generator {
             token_type_ids,
             position_ids,
             input_embeds,
-            encoder_outputs,
-            decoder_input_ids,
+            _encoder_outputs,
+            _decoder_input_ids,
         ) = (
             option_array2_to_tensor(input_ids),
             option_array2_to_tensor(attention_mask),
@@ -795,7 +793,7 @@ impl PrivateLanguageGenerator for GPT2Generator {
         #[cfg(feature = "libtorch")]
         let beam_indices = Tensor::from_slice(beam_indices);
         #[cfg(feature = "libtorch")]
-        let encoder_outputs_tensor = _encoder_outputs.map(|output| {
+        let _encoder_outputs_tensor = _encoder_outputs.map(|output| {
             crate::common::tensor_conversion::array_to_tensor_f32(&output)
                 .expect("Error converting encoder output")
         });

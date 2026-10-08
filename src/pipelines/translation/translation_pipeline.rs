@@ -1007,7 +1007,7 @@ impl TranslationConfig {
     /// use rust_bert::pipelines::common::{ModelResource, ModelType};
     /// use rust_bert::pipelines::translation::TranslationConfig;
     /// use rust_bert::resources::RemoteResource;
-    /// use tch::Device;
+    /// use rust_bert::Device;
     ///
     /// let model_resource = ModelResource::Torch(Box::new(RemoteResource::from_pretrained(
     ///  MarianModelResources::ROMANCE2ENGLISH,
@@ -1342,7 +1342,7 @@ impl TranslationModel {
     /// use rust_bert::pipelines::common::{ModelResource, ModelType};
     /// use rust_bert::pipelines::translation::{TranslationConfig, TranslationModel};
     /// use rust_bert::resources::RemoteResource;
-    /// use tch::Device;
+    /// use rust_bert::Device;
     ///
     /// let model_resource = ModelResource::Torch(Box::new(RemoteResource::from_pretrained(
     ///  MarianModelResources::ROMANCE2ENGLISH,
@@ -1399,7 +1399,7 @@ impl TranslationModel {
     /// use rust_bert::pipelines::common::{ModelResource, ModelType, TokenizerOption};
     /// use rust_bert::pipelines::translation::{TranslationConfig, TranslationModel};
     /// use rust_bert::resources::{RemoteResource, ResourceProvider};
-    /// use tch::Device;
+    /// use rust_bert::Device;
     ///
     /// let model_resource = ModelResource::Torch(Box::new(RemoteResource::from_pretrained(
     ///  MarianModelResources::ROMANCE2ENGLISH,
@@ -1480,7 +1480,7 @@ impl TranslationModel {
     /// use rust_bert::pipelines::common::{ModelResource, ModelType};
     /// use rust_bert::pipelines::translation::{Language, TranslationConfig, TranslationModel};
     /// use rust_bert::resources::RemoteResource;
-    /// use tch::Device;
+    /// use rust_bert::Device;
     ///
     /// let model_resource = ModelResource::Torch(Box::new(RemoteResource::from_pretrained(
     ///  MarianModelResources::ENGLISH2ROMANCE,
@@ -1541,7 +1541,7 @@ impl TranslationModel {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "libtorch"))]
 mod test {
     use super::*;
     use crate::marian::{

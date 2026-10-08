@@ -22,7 +22,7 @@ use crate::pipelines::common::TokenizerOption;
 /// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 /// SOFTWARE.
 use crate::pipelines::keywords_extraction::tokenizer::StopWordsTokenizer;
-#[cfg(feature = "remote")]
+#[cfg(all(feature = "remote", feature = "libtorch"))]
 use crate::pipelines::sentence_embeddings::SentenceEmbeddingsModelType;
 use crate::pipelines::sentence_embeddings::{
     SentenceEmbeddingsConfig, SentenceEmbeddingsModel, SentenceEmbeddingsSentenceBertConfig,
@@ -237,13 +237,10 @@ impl<'a> KeywordExtractionModel<'a> {
         for (document_index, (start, end)) in document_boundaries.into_iter().enumerate() {
             let mut document_keywords = Vec::new();
             let document_embedding = document_embeddings
-                .slice(ndarray::s![
-                    document_index as usize..(document_index + 1) as usize,
-                    ..
-                ])
+                .slice(ndarray::s![document_index..(document_index + 1), ..])
                 .to_owned();
             let word_embeddings = word_embeddings
-                .slice(ndarray::s![start as usize..end as usize, ..])
+                .slice(ndarray::s![start..end, ..])
                 .to_owned();
             let num_keywords = min(self.num_keywords, word_embeddings.nrows());
             let local_top_word_indices = self.scorer_type.score_keywords(

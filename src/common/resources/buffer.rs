@@ -34,7 +34,7 @@ impl ResourceProvider for BufferResource {
     /// let weights_resource = BufferResource::from(data);
     /// let weights = weights_resource.get_resource();
     /// ```
-    fn get_resource(&self) -> Result<Resource, RustBertError> {
+    fn get_resource(&self) -> Result<Resource<'_>, RustBertError> {
         Ok(Resource::Buffer(self.data.write().unwrap()))
     }
 }

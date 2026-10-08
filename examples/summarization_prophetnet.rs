@@ -18,7 +18,6 @@ use rust_bert::prophetnet::{
     ProphetNetConfigResources, ProphetNetModelResources, ProphetNetVocabResources,
 };
 use rust_bert::resources::RemoteResource;
-use tch::Device;
 
 fn main() -> anyhow::Result<()> {
     let config_resource = Box::new(RemoteResource::from_pretrained(
@@ -40,7 +39,7 @@ fn main() -> anyhow::Result<()> {
         length_penalty: 1.2,
         num_beams: 4,
         no_repeat_ngram_size: 3,
-        device: Device::cuda_if_available(),
+        device: rust_bert::Device::cuda_if_available(),
         ..Default::default()
     };
     let summarization_model = SummarizationModel::new(summarization_config)?;

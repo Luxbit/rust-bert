@@ -13,17 +13,12 @@
 use crate::common::activations::{_tanh, TensorFunction};
 use crate::common::dropout::Dropout;
 use crate::common::embeddings::get_shape_and_device_from_ids_embeddings_pair;
-pub use crate::longformer::config::{
-    LongformerConfig, LongformerConfigResources, LongformerMergesResources,
-    LongformerModelResources, LongformerVocabResources,
-};
+pub use crate::longformer::config::LongformerConfig;
 use crate::longformer::embeddings::LongformerEmbeddings;
 use crate::longformer::encoder::LongformerEncoder;
-use crate::{Activation, Config, RustBertError};
-use serde::{Deserialize, Serialize};
+use crate::RustBertError;
 use std::borrow::Borrow;
 
-use std::cmp::{max, min};
 use tch::nn::{Init, Module, ModuleT};
 use tch::{nn, Kind, Tensor};
 

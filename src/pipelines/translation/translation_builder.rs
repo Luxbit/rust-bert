@@ -1,5 +1,6 @@
 use crate::pipelines::common::ModelType;
 
+#[cfg(feature = "libtorch")]
 pub(super) struct TranslationResources<R>
 where
     R: ResourceProvider + Send + 'static,
@@ -16,7 +17,7 @@ use crate::pipelines::translation::Language;
 use crate::Device;
 use std::fmt::Debug;
 
-#[cfg(feature = "remote")]
+#[cfg(all(feature = "remote", feature = "libtorch"))]
 use crate::{
     pipelines::common::ModelResource,
     pipelines::translation::{TranslationConfig, TranslationModel},
@@ -126,7 +127,7 @@ impl TranslationModelBuilder {
     ///
     /// ```no_run
     /// use rust_bert::pipelines::translation::TranslationModelBuilder;
-    /// use crate::Device;
+    /// use rust_bert::Device;
     /// fn main() -> anyhow::Result<()> {
     ///  let model = TranslationModelBuilder::new()
     ///      .with_device(Device::Cuda(0))

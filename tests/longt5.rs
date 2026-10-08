@@ -1,3 +1,4 @@
+#![cfg(feature = "libtorch")]
 use rust_bert::longt5::{LongT5ConfigResources, LongT5ModelResources, LongT5VocabResources};
 use rust_bert::pipelines::common::{ModelResource, ModelType};
 use rust_bert::pipelines::summarization::{SummarizationConfig, SummarizationModel};

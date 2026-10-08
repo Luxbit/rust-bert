@@ -181,14 +181,8 @@ impl BartDecoder {
         let normalize_embedding = config.normalize_embedding.unwrap_or(true);
         let static_position_embeddings = config.static_position_embeddings.unwrap_or(false);
         let scale_embedding = match config.scale_embedding {
-            Some(value) => {
-                if value {
-                    (config.d_model as f64).sqrt()
-                } else {
-                    1.0
-                }
-            }
-            None => 1.0,
+            Some(true) => (config.d_model as f64).sqrt(),
+            Some(false) | None => 1.0,
         };
 
         let dropout = Dropout::new(config.dropout);

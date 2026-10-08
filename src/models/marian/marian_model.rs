@@ -14,7 +14,7 @@
 use crate::bart::{BartConfig, BartModel, BartModelOutput, LayerState};
 use crate::pipelines::common::{ModelType, TokenizerOption};
 use crate::pipelines::generation_utils::private_generation_utils::{
-    force_token_id_generation, PreparedInput, PrivateLanguageGenerator,
+    PreparedInput, PrivateLanguageGenerator,
 };
 use crate::pipelines::generation_utils::{
     last_column, option_array2_to_tensor, option_array_to_tensor_f32,
@@ -27,7 +27,7 @@ use crate::{Config, RustBertError};
 use ndarray::ArrayD;
 use std::borrow::Borrow;
 use tch::nn::Init;
-use tch::{nn, Device, Kind, Tensor};
+use tch::{nn, Tensor};
 
 /// # Marian Pretrained model weight files
 pub struct MarianModelResources;
@@ -861,9 +861,9 @@ impl PrivateLanguageGenerator for MarianGenerator {
         let (
             input_ids,
             attention_mask,
-            token_type_ids,
-            position_ids,
-            input_embeds,
+            _token_type_ids,
+            _position_ids,
+            _input_embeds,
             encoder_outputs,
             decoder_input_ids,
         ) = (

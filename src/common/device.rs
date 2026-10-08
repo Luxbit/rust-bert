@@ -27,6 +27,7 @@ impl Device {
     pub fn cuda_if_available() -> Self {
         #[cfg(feature = "cuda")]
         {
+            use ort::ep::ExecutionProvider;
             if ort::ep::CUDA::default().is_available().unwrap_or(false) {
                 return Device::Cuda(0);
             }

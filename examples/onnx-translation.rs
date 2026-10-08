@@ -1,5 +1,4 @@
 use rust_bert::m2m_100::{M2M100SourceLanguages, M2M100TargetLanguages};
-use tch::Device;
 
 use rust_bert::pipelines::common::{ModelResource, ModelType, ONNXModelResources};
 use rust_bert::pipelines::translation::{Language, TranslationConfig, TranslationModel};
@@ -36,7 +35,7 @@ fn main() -> anyhow::Result<()> {
         )),
         M2M100SourceLanguages::M2M100_418M,
         M2M100TargetLanguages::M2M100_418M,
-        Device::cuda_if_available(),
+        rust_bert::Device::cuda_if_available(),
     ))?;
 
     let source_sentence = "This sentence will be translated in multiple languages.";

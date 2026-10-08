@@ -19,7 +19,6 @@ use rust_bert::mbart::{
 use rust_bert::pipelines::common::{ModelResource, ModelType};
 use rust_bert::pipelines::translation::{Language, TranslationConfig, TranslationModel};
 use rust_bert::resources::RemoteResource;
-use tch::Device;
 
 fn main() -> anyhow::Result<()> {
     let model_resource = RemoteResource::from_pretrained(MBartModelResources::MBART50_MANY_TO_MANY);
@@ -38,7 +37,7 @@ fn main() -> anyhow::Result<()> {
         None,
         source_languages,
         target_languages,
-        Device::cuda_if_available(),
+        rust_bert::Device::cuda_if_available(),
     );
     let model = TranslationModel::new(translation_config)?;
 

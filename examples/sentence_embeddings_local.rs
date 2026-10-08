@@ -24,7 +24,7 @@ use rust_bert::pipelines::sentence_embeddings::SentenceEmbeddingsBuilder;
 fn main() -> anyhow::Result<()> {
     // Set-up sentence embeddings model
     let model = SentenceEmbeddingsBuilder::local("resources/all-MiniLM-L12-v2")
-        .with_device(tch::Device::cuda_if_available())
+        .with_device(rust_bert::Device::cuda_if_available())
         .create_model()?;
 
     // Define input

@@ -5,11 +5,10 @@ use criterion::Criterion;
 use rust_bert::pipelines::summarization::{SummarizationConfig, SummarizationModel};
 use std::hint::black_box;
 use std::time::{Duration, Instant};
-use tch::Device;
 
 fn create_summarization_model() -> SummarizationModel {
     let config = SummarizationConfig {
-        device: Device::cuda_if_available(),
+        device: rust_bert::Device::cuda_if_available(),
         ..Default::default()
     };
     SummarizationModel::new(config).unwrap()
@@ -30,7 +29,7 @@ fn summarization_load_model(iters: u64) -> Duration {
     for _i in 0..iters {
         let start = Instant::now();
         let config = SummarizationConfig {
-            device: Device::cuda_if_available(),
+            device: rust_bert::Device::cuda_if_available(),
             ..Default::default()
         };
         let _ = SummarizationModel::new(config).unwrap();

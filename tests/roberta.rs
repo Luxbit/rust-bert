@@ -16,7 +16,7 @@ use rust_bert::Device;
 use rust_tokenizers::tokenizer::{RobertaTokenizer, Tokenizer, TruncationStrategy};
 use rust_tokenizers::vocab::Vocab;
 use std::collections::HashMap;
-use tch::{nn, no_grad, Device as TchDevice, Tensor};
+use tch::{nn, no_grad, Tensor};
 
 #[test]
 fn roberta_masked_lm() -> anyhow::Result<()> {

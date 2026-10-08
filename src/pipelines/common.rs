@@ -39,7 +39,7 @@ mod torch_configs {
     pub use crate::gpt_j::GptJConfig;
     pub use crate::gpt_neo::GptNeoConfig;
     pub use crate::longt5::LongT5Config;
-    pub use crate::m2m_100::M2M100Config;
+
     pub use crate::marian::MarianConfig;
     pub use crate::openai_gpt::OpenAiGptConfig;
     pub use crate::pegasus::PegasusConfig;
@@ -62,7 +62,7 @@ use std::convert::TryFrom;
 
 use std::fmt::Debug;
 
-use crate::Device;
+#[cfg_attr(not(feature = "libtorch"), allow(unused_imports))]
 use ndarray::{Array1, Array2, ArrayD};
 use std::path::{Path, PathBuf};
 #[cfg(feature = "libtorch")]
@@ -103,7 +103,7 @@ impl ResourceProvider for ModelResource {
             ModelResource::ONNX(_) => Err(RustBertError::UnsupportedError),
         }
     }
-    fn get_resource(&self) -> Result<Resource, RustBertError> {
+    fn get_resource(&self) -> Result<Resource<'_>, RustBertError> {
         match self {
             ModelResource::Torch(ref resource) => resource.get_resource(),
             #[cfg(feature = "onnx")]
@@ -151,13 +151,6 @@ impl ModelResource {
             decoder_with_past_path: decoder_with_past_path.transpose()?,
         })
     }
-}
-
-pub(crate) fn get_device(_model_resource: ModelResource, device: Device) -> Device {
-    // ONNX sessions honor the requested device through the matching execution
-    // providers (see `ONNXEnvironmentConfig::from_device`), so the device is
-    // passed through unchanged for both backends.
-    device
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq)]
@@ -365,7 +358,10 @@ impl ConfigOption {
             ModelType::ONNX => ConfigOption::ONNX(ONNXModelConfig::from_file(path)),
             #[cfg(all(feature = "onnx", not(feature = "libtorch")))]
             _ => {
-                unreachable!("{model_type:?} models are only supported with the `libtorch` feature",)
+                unreachable!(
+                    "{:?} models are only supported with the `libtorch` feature",
+                    model_type
+                )
             }
         }
     }

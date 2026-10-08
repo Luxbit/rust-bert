@@ -65,7 +65,7 @@ use crate::Device;
 use ndarray::Array2;
 use std::collections::HashMap;
 #[cfg(feature = "libtorch")]
-use tch::{Kind, Tensor};
+use tch::Kind;
 use uuid::Uuid;
 
 #[cfg(feature = "remote")]
@@ -833,7 +833,6 @@ pub struct ConversationModel {
     model: ConversationOption,
     eos_token_id: i64,
     max_allowed_context_length: Option<i64>,
-    device: Device,
 }
 
 impl ConversationModel {
@@ -859,14 +858,12 @@ impl ConversationModel {
         let max_allowed_length = conversation_config
             .max_length
             .map(|max_length| max_length - conversation_config.min_length_for_response);
-        let device = conversation_config.device;
         let model = ConversationOption::new(conversation_config)?;
         let eos_token_id = model.get_eos_id()?;
         Ok(ConversationModel {
             model,
             eos_token_id,
             max_allowed_context_length: max_allowed_length,
-            device,
         })
     }
 
@@ -902,14 +899,12 @@ impl ConversationModel {
         let max_allowed_length = conversation_config
             .max_length
             .map(|max_length| max_length - conversation_config.min_length_for_response);
-        let device = conversation_config.device;
         let model = ConversationOption::new_with_tokenizer(conversation_config, tokenizer)?;
         let eos_token_id = model.get_eos_id()?;
         Ok(ConversationModel {
             model,
             eos_token_id,
             max_allowed_context_length: max_allowed_length,
-            device,
         })
     }
 
@@ -969,9 +964,9 @@ impl ConversationModel {
                 removed_padding,
             ) in active_conversations
                 .into_iter()
-                .zip(generated.into_iter().zip(prompt_ids.into_iter()))
-                .zip(active_uuid.into_iter())
-                .zip(removed_padding_quantities.into_iter())
+                .zip(generated.into_iter().zip(prompt_ids))
+                .zip(active_uuid)
+                .zip(removed_padding_quantities)
             {
                 let generated_response = &generated_sequence[input_length - removed_padding.0..];
                 conversation

@@ -80,7 +80,7 @@ fn albert_masked_lm() -> anyhow::Result<()> {
 
     assert_eq!("▁them", word_1); // Outputs "_them" : "Looks like one [them] is missing (? this is identical with the original implementation)"
     assert_eq!("▁grapes", word_2); // Outputs "grapes" : "It\'s like comparing [grapes] to apples"
-    assert!((model_output.prediction_scores.double_value(&[0, 0, 0]) - 4.6143).abs() < 1e-4);
+    assert!((model_output.prediction_scores.double_value(&[0, 0, 0]) as f64 - 4.6143).abs() < 1e-4);
     Ok(())
 }
 

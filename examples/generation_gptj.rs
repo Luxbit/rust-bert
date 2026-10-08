@@ -4,7 +4,6 @@ use rust_bert::gpt_j::{GptJConfigResources, GptJMergesResources, GptJVocabResour
 use rust_bert::pipelines::common::{ModelResource, ModelType};
 use rust_bert::pipelines::text_generation::{TextGenerationConfig, TextGenerationModel};
 use rust_bert::resources::{LocalResource, RemoteResource};
-use tch::Device;
 
 /// Equivalent Python code:
 ///
@@ -77,7 +76,7 @@ fn main() -> anyhow::Result<()> {
         early_stopping: true,
         num_beams: 1,
         num_return_sequences: 1,
-        device: Device::cuda_if_available(),
+        device: rust_bert::Device::cuda_if_available(),
         ..Default::default()
     };
 

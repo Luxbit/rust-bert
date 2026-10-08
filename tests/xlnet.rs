@@ -190,7 +190,7 @@ fn xlnet_lm_model() -> anyhow::Result<()> {
 
     assert_eq!(word_1, "▁three".to_string());
     assert_eq!(model_output.lm_logits.size(), vec!(1, 1, 32000));
-    assert!((model_output.lm_logits.double_value(&[0, 0, 139]) - -5.3240).abs() < 1e-4);
+    assert!((model_output.lm_logits.double_value(&[0, 0, 139]) as f64 - -5.3240).abs() < 1e-4);
     Ok(())
 }
 

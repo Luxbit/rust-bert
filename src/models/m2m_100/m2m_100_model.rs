@@ -1,5 +1,3 @@
-pub use crate::m2m_100::config::{M2M100SourceLanguages, M2M100TargetLanguages};
-use crate::pipelines::translation::Language;
 // Copyright 2021 The Fairseq Authors and The HuggingFace Inc. team. All rights reserved.
 // Copyright 2020 Guillaume Becquin
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,7 +29,7 @@ use crate::{Config, RustBertError};
 use ndarray::ArrayD;
 use std::borrow::Borrow;
 use tch::nn::{embedding, EmbeddingConfig};
-use tch::{nn, Device, Kind, Tensor};
+use tch::{nn, Kind, Tensor};
 
 /// # M2M100 Pretrained model weight files
 pub struct M2M100ModelResources;
@@ -630,9 +628,9 @@ impl PrivateLanguageGenerator for M2M100Generator {
         let (
             input_ids,
             attention_mask,
-            token_type_ids,
-            position_ids,
-            input_embeds,
+            _token_type_ids,
+            _position_ids,
+            _input_embeds,
             encoder_outputs,
             decoder_input_ids,
         ) = (

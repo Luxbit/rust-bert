@@ -1,6 +1,6 @@
 [package]
 name = "rust-bert"
-version = "0.23.0"
+version = "0.24.0"
 authors = ["Guillaume Becquin <guillaume.becquin@gmail.com>"]
 edition = "2018"
 description = "Ready-to-use NLP pipelines and language models"
@@ -157,3 +157,128 @@ required-features = ["onnx"]
 [[example]]
 name = "generation_gpt2_hf_tokenizers"
 required-features = ["hf-tokenizers"]
+
+[[example]]
+name = "async-sentiment"
+path = "examples/async-sentiment.rs"
+required-features = ["libtorch"]
+
+[[example]]
+name = "codebert"
+path = "examples/codebert.rs"
+required-features = ["libtorch"]
+
+[[example]]
+name = "generation_reformer"
+path = "examples/generation_reformer.rs"
+required-features = ["libtorch"]
+
+[[example]]
+name = "keyword_extraction"
+path = "examples/keyword_extraction.rs"
+required-features = ["libtorch"]
+
+[[example]]
+name = "natural_language_inference_deberta"
+path = "examples/natural_language_inference_deberta.rs"
+required-features = ["libtorch"]
+
+[[example]]
+name = "question_answering_squad"
+path = "examples/question_answering_squad.rs"
+required-features = ["libtorch"]
+
+[[example]]
+name = "sentiment_analysis"
+path = "examples/sentiment_analysis.rs"
+required-features = ["libtorch"]
+
+[[example]]
+name = "sentence_embeddings_local"
+path = "examples/sentence_embeddings_local.rs"
+required-features = ["libtorch"]
+
+[[example]]
+name = "sequence_classification_multilabel"
+path = "examples/sequence_classification_multilabel.rs"
+required-features = ["libtorch"]
+
+[[example]]
+name = "summarization_bart"
+path = "examples/summarization_bart.rs"
+required-features = ["libtorch"]
+
+[[example]]
+name = "summarization_prophetnet"
+path = "examples/summarization_prophetnet.rs"
+required-features = ["libtorch"]
+
+[[example]]
+name = "summarization_t5"
+path = "examples/summarization_t5.rs"
+required-features = ["libtorch"]
+
+[[example]]
+name = "translation_m2m100"
+path = "examples/translation_m2m100.rs"
+required-features = ["libtorch"]
+
+[[example]]
+name = "translation_marian"
+path = "examples/translation_marian.rs"
+required-features = ["libtorch"]
+
+[[example]]
+name = "translation_mbart"
+path = "examples/translation_mbart.rs"
+required-features = ["libtorch"]
+
+[[example]]
+name = "translation_t5"
+path = "examples/translation_t5.rs"
+required-features = ["libtorch"]
+
+[[example]]
+name = "zero_shot_classification"
+path = "examples/zero_shot_classification.rs"
+required-features = ["libtorch", "remote"]
+
+[[example]]
+name = "question_answering"
+path = "examples/question_answering.rs"
+required-features = ["libtorch", "remote"]
+
+[[example]]
+name = "sentiment_analysis_sst2"
+path = "examples/sentiment_analysis_sst2.rs"
+required-features = ["libtorch", "remote"]
+
+[[example]]
+name = "sentence_embeddings"
+path = "examples/sentence_embeddings.rs"
+required-features = ["libtorch", "remote"]
+
+[[example]]
+name = "buffer_resource"
+path = "examples/buffer_resource.rs"
+required-features = ["libtorch"]
+
+[[example]]
+name = "generation_gpt_neo"
+path = "examples/generation_gpt_neo.rs"
+required-features = ["libtorch"]
+
+[[example]]
+name = "summarization_pegasus"
+path = "examples/summarization_pegasus.rs"
+required-features = ["libtorch"]
+
+[[example]]
+name = "generation_gptj"
+path = "examples/generation_gptj.rs"
+required-features = ["libtorch"]
+
+[[example]]
+name = "translation_builder"
+path = "examples/translation_builder.rs"
+required-features = ["libtorch", "remote"]

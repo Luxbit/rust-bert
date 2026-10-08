@@ -21,7 +21,7 @@
 /// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 /// SOFTWARE.
 use crate::pipelines::keywords_extraction::KeywordScorerType;
-use ndarray::{Array1, Array2, Axis};
+use ndarray::{Array1, Array2};
 use std::cmp::{max, min};
 
 impl KeywordScorerType {
@@ -98,7 +98,7 @@ fn cosine_similarity_score(
     num_keywords: usize,
 ) -> Vec<(usize, f32)> {
     let similarities = cosine_similarity(Some(document_embedding), word_embeddings)
-        .into_shape((Array1::<f32>::zeros(word_embeddings.nrows()).len(),))
+        .into_shape_with_order((word_embeddings.nrows(),))
         .map(|array| array.to_owned())
         .unwrap_or_else(|_| ndarray::Array1::zeros(word_embeddings.nrows()));
 
@@ -156,7 +156,7 @@ fn maximal_margin_relevance_score(
 
     keyword_indices
         .into_iter()
-        .map(|index| (index as usize, word_document_similarities[index] as f32))
+        .map(|index| (index, word_document_similarities[index]))
         .collect()
 }
 
@@ -199,7 +199,7 @@ fn max_sum_score(
     let n = top_keywords.len();
     let k = num_keywords;
     let mut combination = vec![0usize; k];
-    let mut generate = |combination: &mut Vec<usize>| -> bool {
+    let generate = |combination: &mut Vec<usize>| -> bool {
         // next lexicographic combination
         let mut i = k;
         while i > 0 && combination[i - 1] == n - k + i - 1 {
@@ -234,15 +234,6 @@ fn max_sum_score(
         if let Some(current_best_score) = best_score {
             if combination_score < current_best_score {
                 best_score = Some(combination_score);
-                best_combination = Some(
-                    top_keywords
-                        .iter()
-                        .map(|&i| i)
-                        .collect::<Vec<usize>>()
-                        .iter()
-                        .map(|&i| i)
-                        .collect(),
-                );
                 best_combination = Some(combination.iter().map(|&i| top_keywords[i]).collect());
             }
         } else {

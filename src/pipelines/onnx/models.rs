@@ -220,8 +220,7 @@ impl ONNXCausalGenerator {
         let onnx_config = match onnx_config {
             Some(onnx_config) => onnx_config,
             None => {
-                default_onnx_config =
-                    ONNXEnvironmentConfig::from_device(crate::Device::from(generate_config.device));
+                default_onnx_config = ONNXEnvironmentConfig::from_device(generate_config.device);
                 &default_onnx_config
             }
         };
@@ -472,6 +471,7 @@ impl PrivateLanguageGenerator for ONNXCausalGenerator {
                 None
             }
             Cache::None => None,
+            #[cfg(feature = "libtorch")]
             _ => {
                 panic!("Invalid cache for ONNX model");
             }
@@ -667,8 +667,7 @@ impl ONNXConditionalGenerator {
         let onnx_config = match onnx_config {
             Some(onnx_config) => onnx_config,
             None => {
-                default_onnx_config =
-                    ONNXEnvironmentConfig::from_device(crate::Device::from(generate_config.device));
+                default_onnx_config = ONNXEnvironmentConfig::from_device(generate_config.device);
                 &default_onnx_config
             }
         };
@@ -950,6 +949,7 @@ impl PrivateLanguageGenerator for ONNXConditionalGenerator {
                 }
             }
             Cache::None => {}
+            #[cfg(feature = "libtorch")]
             _ => {
                 panic!("Invalid cache for ONNX model");
             }

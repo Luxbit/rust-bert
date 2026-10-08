@@ -29,14 +29,12 @@ use crate::pipelines::generation_utils::{
     Cache, GenerateConfig, GeneratedLogits, LanguageGenerator,
 };
 use crate::pipelines::translation::Language;
-use crate::{Activation, Config, RustBertError};
+use crate::{Config, RustBertError};
 use ndarray::ArrayD;
-use serde::{Deserialize, Serialize};
 use std::borrow::Borrow;
-use std::collections::HashMap;
 use tch::kind::Kind::Int64;
 use tch::nn::{embedding, EmbeddingConfig, Init};
-use tch::{nn, Device, Tensor};
+use tch::{nn, Tensor};
 
 /// # MBART source languages pre-sets
 pub struct MBartSourceLanguages;
@@ -811,9 +809,9 @@ impl PrivateLanguageGenerator for MBartGenerator {
         let (
             input_ids,
             attention_mask,
-            token_type_ids,
-            position_ids,
-            input_embeds,
+            _token_type_ids,
+            _position_ids,
+            _input_embeds,
             encoder_outputs,
             decoder_input_ids,
         ) = (

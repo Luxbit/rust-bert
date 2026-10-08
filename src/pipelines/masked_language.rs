@@ -46,12 +46,12 @@
 //! }
 //! ```
 //!
+use crate::bert::{BertConfigResources, BertModelResources, BertVocabResources};
 use crate::common::error::RustBertError;
-use crate::pipelines::common::{
-    get_device, ConfigOption, ModelResource, ModelType, TokenizerOption,
-};
+use crate::pipelines::common::{ConfigOption, ModelResource, ModelType, TokenizerOption};
+#[cfg(feature = "remote")]
+use crate::resources::RemoteResource;
 use crate::resources::ResourceProvider;
-use std::convert::TryFrom;
 
 #[cfg(feature = "libtorch")]
 use crate::pipelines::common::cast_var_store;
@@ -60,13 +60,7 @@ use crate::pipelines::onnx::{config::ONNXEnvironmentConfig, ONNXEncoder};
 #[cfg(feature = "libtorch")]
 use tch::nn::VarStore;
 #[cfg(feature = "libtorch")]
-use tch::{no_grad, Kind, Tensor};
-
-#[cfg(all(feature = "remote", feature = "libtorch"))]
-use crate::{
-    bert::{BertConfigResources, BertModelResources, BertVocabResources},
-    resources::RemoteResource,
-};
+use tch::Kind;
 
 #[cfg(feature = "libtorch")]
 mod torch_models {
@@ -78,7 +72,7 @@ mod torch_models {
 }
 
 use crate::Device;
-use ndarray::{Array1, Array2, ArrayD};
+use ndarray::ArrayD;
 
 #[derive(Debug, Clone)]
 /// Output container for masked language model pipeline.
@@ -162,7 +156,7 @@ impl MaskedLanguageConfig {
         }
     }
 }
-#[cfg(all(feature = "remote", feature = "libtorch"))]
+#[cfg(feature = "remote")]
 impl Default for MaskedLanguageConfig {
     /// Provides a BERT language model
     fn default() -> MaskedLanguageConfig {
@@ -356,14 +350,20 @@ impl MaskedLanguageOption {
         _encoder_mask: Option<&ArrayD<i64>>,
         train: bool,
     ) -> ArrayD<f32> {
+        let _ = train;
         #[cfg(feature = "libtorch")]
         {
             use crate::common::tensor_conversion::tensor_to_array_f32;
             use crate::pipelines::common::{to_tensor_f32, to_tensor_i64};
+            #[cfg_attr(not(feature = "onnx"), allow(unused_variables))]
             let input_ids_array = input_ids;
+            #[cfg_attr(not(feature = "onnx"), allow(unused_variables))]
             let mask_array = mask;
+            #[cfg_attr(not(feature = "onnx"), allow(unused_variables))]
             let token_type_ids_array = token_type_ids;
+            #[cfg_attr(not(feature = "onnx"), allow(unused_variables))]
             let position_ids_array = position_ids;
+            #[cfg_attr(not(feature = "onnx"), allow(unused_variables))]
             let input_embeds_array = input_embeds;
             let input_ids = to_tensor_i64(input_ids);
             let mask = to_tensor_i64(mask);
@@ -489,6 +489,7 @@ impl MaskedLanguageOption {
                         .logits
                         .unwrap()
                 }
+                #[cfg(not(feature = "onnx"))]
                 _ => unreachable!("no inference backend available"),
             }
         }
@@ -500,7 +501,6 @@ pub struct MaskedLanguageModel {
     tokenizer: TokenizerOption,
     language_encode: MaskedLanguageOption,
     mask_token: Option<String>,
-    device: Device,
     max_length: usize,
 }
 
@@ -578,12 +578,10 @@ impl MaskedLanguageModel {
             .unwrap_or(usize::MAX);
 
         let mask_token = config.mask_token;
-        let device = get_device(config.model_resource, config.device);
         Ok(MaskedLanguageModel {
             tokenizer,
             language_encode,
             mask_token,
-            device,
             max_length,
         })
     }

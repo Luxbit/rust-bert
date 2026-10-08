@@ -85,7 +85,7 @@ fn m2m100_translation() -> anyhow::Result<()> {
         Some(merges_resource),
         source_languages,
         target_languages,
-        Device::cuda_if_available(),
+        rust_bert::Device::cuda_if_available(),
     );
     let model = TranslationModel::new(translation_config)?;
 

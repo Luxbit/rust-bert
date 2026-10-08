@@ -20,7 +20,6 @@ use rust_bert::marian::{
 use rust_bert::pipelines::common::{ModelResource, ModelType};
 use rust_bert::pipelines::translation::{TranslationConfig, TranslationModel};
 use rust_bert::resources::RemoteResource;
-use tch::Device;
 
 fn main() -> anyhow::Result<()> {
     let model_resource = RemoteResource::from_pretrained(MarianModelResources::ENGLISH2CHINESE);
@@ -39,7 +38,7 @@ fn main() -> anyhow::Result<()> {
         Some(merges_resource),
         source_languages,
         target_languages,
-        Device::cuda_if_available(),
+        rust_bert::Device::cuda_if_available(),
     );
     let model = TranslationModel::new(translation_config)?;
 

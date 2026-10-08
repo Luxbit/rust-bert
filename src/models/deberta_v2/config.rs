@@ -134,6 +134,10 @@ impl NormRelEmbedTypes {
     pub fn len(&self) -> usize {
         self.types.len()
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.types.is_empty()
+    }
 }
 
 pub fn deserialize_norm_type<'de, D>(deserializer: D) -> Result<Option<NormRelEmbedTypes>, D::Error>

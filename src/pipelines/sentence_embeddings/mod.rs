@@ -19,7 +19,7 @@
 //!
 //! # fn main() -> anyhow::Result<()> {
 //! let model = SentenceEmbeddingsBuilder::local("local/path/to/distiluse-base-multilingual-cased")
-//!     .with_device(tch::Device::cuda_if_available())
+//!     .with_device(rust_bert::Device::cuda_if_available())
 //!     .create_model()?;
 //!
 //! let sentences = ["This is an example sentence", "Each sentence is converted"];

@@ -25,7 +25,6 @@ use crate::pipelines::common::{ModelType, TokenizerOption};
 use crate::pipelines::generation_utils::private_generation_utils::{
     PreparedInput, PrivateLanguageGenerator,
 };
-use crate::pipelines::generation_utils::LMModelOutput;
 use crate::pipelines::generation_utils::{
     last_column, option_array2_to_tensor, option_array_to_tensor_f32,
 };
@@ -38,7 +37,7 @@ use crate::reformer::embeddings::ReformerEmbeddings;
 use crate::reformer::encoder::{ReformerEncoder, ReformerModelOutput};
 use crate::{Config, RustBertError};
 use ndarray::ArrayD;
-use std::cmp::{max, min};
+use std::cmp::max;
 
 /// # Reformer Pretrained model weight files
 pub struct ReformerModelResources;
@@ -1062,14 +1061,14 @@ impl ReformerGenerator {
         let device: tch::Device = generate_config.device.into();
 
         generate_config.validate();
-        let mut var_store = nn::VarStore::new(device.into());
+        let mut var_store = nn::VarStore::new(device);
         let config = ReformerConfig::from_file(config_path);
         let model = ReformerModelWithLMHead::new(var_store.root(), &config)?;
         crate::resources::load_weights(
             &generate_config.model_resource,
             &mut var_store,
             generate_config.kind,
-            device.into(),
+            device,
         )?;
 
         let bos_token_id = tokenizer.get_bos_id();
@@ -1152,11 +1151,11 @@ impl PrivateLanguageGenerator for ReformerGenerator {
         let (
             input_ids,
             attention_mask,
-            token_type_ids,
-            position_ids,
-            input_embeds,
-            encoder_outputs,
-            decoder_input_ids,
+            _token_type_ids,
+            _position_ids,
+            _input_embeds,
+            _encoder_outputs,
+            _decoder_input_ids,
         ) = (
             option_array2_to_tensor(input_ids),
             option_array2_to_tensor(attention_mask),
@@ -1253,7 +1252,7 @@ impl PrivateLanguageGenerator for ReformerGenerator {
         #[cfg(feature = "libtorch")]
         let beam_indices = Tensor::from_slice(beam_indices);
         #[cfg(feature = "libtorch")]
-        let encoder_outputs_tensor = encoder_outputs.clone().map(|output| {
+        let _encoder_outputs_tensor = encoder_outputs.clone().map(|output| {
             crate::common::tensor_conversion::array_to_tensor_f32(&output)
                 .expect("Error converting encoder output")
         });

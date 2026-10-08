@@ -86,19 +86,12 @@ use crate::pipelines::token_classification::{TokenClassificationConfig, TokenCla
 use serde::{Deserialize, Serialize};
 
 use crate::pipelines::common::TokenizerOption;
-#[cfg(all(feature = "remote", feature = "libtorch"))]
-use {
-    crate::Device,
-    crate::{
-        mobilebert::{
-            MobileBertConfigResources, MobileBertModelResources, MobileBertVocabResources,
-        },
-        pipelines::{
-            common::{ModelResource, ModelType},
-            token_classification::LabelAggregationOption,
-        },
-        resources::RemoteResource,
-    },
+use crate::pipelines::token_classification::LabelAggregationOption;
+use crate::Device;
+use crate::{
+    mobilebert::{MobileBertConfigResources, MobileBertModelResources, MobileBertVocabResources},
+    pipelines::common::{ModelResource, ModelType},
+    resources::RemoteResource,
 };
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -117,7 +110,7 @@ pub struct POSConfig {
     token_classification_config: TokenClassificationConfig,
 }
 
-#[cfg(all(feature = "remote", feature = "libtorch"))]
+#[cfg(feature = "remote")]
 impl Default for POSConfig {
     /// Provides a Part of speech tagging model (English)
     fn default() -> POSConfig {

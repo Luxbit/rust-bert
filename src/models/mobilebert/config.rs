@@ -79,6 +79,7 @@ impl Default for MobileBertConfig {
     }
 }
 
+#[allow(non_camel_case_types)]
 #[derive(Clone, Debug, Serialize, Deserialize, Copy)]
 /// # Normalization type to use for the MobileBERT model.
 /// `no_norm` uses a matrix multiplication with a set of learned weights, while `layer_norm` uses a
@@ -86,4 +87,28 @@ impl Default for MobileBertConfig {
 pub enum NormalizationType {
     layer_norm,
     no_norm,
+}
+
+impl MobileBertModelResources {
+    /// Shared under MIT license at <https://huggingface.co/mrm8488/mobilebert-finetuned-pos>. Modified with conversion to C-array format.
+    pub const MOBILEBERT_ENGLISH_POS: (&'static str, &'static str) = (
+        "mobilebert-finetuned-pos/model",
+        "https://huggingface.co/mrm8488/mobilebert-finetuned-pos/resolve/main/rust_model.ot",
+    );
+}
+
+impl MobileBertConfigResources {
+    /// Shared under MIT license at <https://huggingface.co/mrm8488/mobilebert-finetuned-pos>. Modified with conversion to C-array format.
+    pub const MOBILEBERT_ENGLISH_POS: (&'static str, &'static str) = (
+        "mobilebert-finetuned-pos/config",
+        "https://huggingface.co/mrm8488/mobilebert-finetuned-pos/resolve/main/config.json",
+    );
+}
+
+impl MobileBertVocabResources {
+    /// Shared under MIT license at <https://huggingface.co/mrm8488/mobilebert-finetuned-pos>. Modified with conversion to C-array format.
+    pub const MOBILEBERT_ENGLISH_POS: (&'static str, &'static str) = (
+        "mobilebert-finetuned-pos/vocab",
+        "https://huggingface.co/mrm8488/mobilebert-finetuned-pos/resolve/main/vocab.txt",
+    );
 }

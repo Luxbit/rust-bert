@@ -1,4 +1,5 @@
 use serde::{de, Deserialize, Deserializer};
+#[cfg(feature = "libtorch")]
 use std::path::Path;
 
 use crate::common::activations::Activation;
@@ -7,8 +8,6 @@ use crate::common::activations::TensorFunction;
 use crate::Config;
 #[cfg(feature = "libtorch")]
 use crate::RustBertError;
-#[cfg(feature = "onnx")]
-use ndarray::{Array2, Array3};
 #[cfg(feature = "libtorch")]
 use tch::{nn, Device, Kind, Tensor};
 

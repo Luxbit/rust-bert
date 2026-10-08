@@ -1110,9 +1110,9 @@ impl PrivateLanguageGenerator for BartGenerator {
         let (
             input_ids,
             attention_mask,
-            token_type_ids,
-            position_ids,
-            input_embeds,
+            _token_type_ids,
+            _position_ids,
+            _input_embeds,
             encoder_outputs,
             decoder_input_ids,
         ) = (

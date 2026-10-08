@@ -115,10 +115,9 @@ use crate::{
     gpt2::{Gpt2ConfigResources, Gpt2MergesResources, Gpt2ModelResources, Gpt2VocabResources},
     resources::RemoteResource,
 };
-use ndarray::{Array1, Array2, ArrayD, Ix2};
-use std::cmp::{max, min};
+use ndarray::{Array2, ArrayD, Ix2};
 #[cfg(feature = "libtorch")]
-use tch::{Kind, Tensor};
+use tch::Tensor;
 
 /// # Configuration for text generation
 pub struct GenerateConfig {
@@ -201,6 +200,7 @@ impl Default for GenerateConfig {
 }
 
 impl GenerateConfig {
+    #[cfg_attr(not(feature = "libtorch"), allow(dead_code))]
     pub(crate) fn validate(&self) {
         assert!(self.temperature > 0f64, "temperature must positive");
         assert!(
@@ -304,6 +304,7 @@ pub(crate) fn append_column(array: &Array2<i64>, column: &[i64]) -> Array2<i64> 
 }
 
 /// Extract the last column of a 2-D integer array as a new 2-D array (n x 1).
+#[cfg_attr(not(feature = "libtorch"), allow(dead_code))]
 pub(crate) fn last_column(array: &ndarray::Array2<i64>) -> ndarray::Array2<i64> {
     ndarray::Array2::from_shape_vec((array.nrows(), 1), array.column(array.ncols() - 1).to_vec())
         .unwrap()
@@ -342,12 +343,10 @@ pub(crate) mod private_generation_utils {
     use rust_tokenizers::TokenIdsWithOffsets;
     use std::cmp::{max, min};
     use std::collections::HashMap;
-    use std::convert::TryFrom;
-    use std::mem;
 
     use rust_tokenizers::tokenizer::{truncate_sequences, TruncationStrategy};
     #[cfg(feature = "libtorch")]
-    use tch::{nn, Tensor};
+    use tch::nn;
 
     use crate::pipelines::common::TokenizerOption;
     use crate::pipelines::generation_utils::{
@@ -1465,7 +1464,7 @@ pub(crate) mod private_generation_utils {
                                         .into_dimensionality::<Ix1>()
                                         .unwrap()
                                         .iter()
-                                        .map(|&index| index)
+                                        .copied()
                                         .collect(),
                                 );
                             }
@@ -1761,7 +1760,7 @@ pub(crate) mod private_generation_utils {
                 }
                 selected
             }
-            rank => panic!("Unexpected logits rank"),
+            _rank => panic!("Unexpected logits rank"),
         }
     }
 
@@ -2047,15 +2046,13 @@ pub trait LanguageGenerator: PrivateLanguageGenerator {
                     ndarray::Array2::<i64>::zeros((total_rows, cur_len as usize));
                 let mut expanded_mask =
                     ndarray::Array2::<i64>::zeros((total_rows, cur_len as usize));
-                let mut row = 0usize;
-                for _ in 0..total_rows {
+                for row in 0..total_rows {
                     expanded_ids
                         .row_mut(row)
                         .assign(&input_ids.row(row % batch_size as usize));
                     expanded_mask
                         .row_mut(row)
                         .assign(&attention_mask.row(row % batch_size as usize));
-                    row += 1;
                 }
                 (expanded_ids, expanded_mask)
             } else {

@@ -1,11 +1,11 @@
+#[cfg(feature = "libtorch")]
 use std::borrow::Borrow;
+#[cfg(feature = "libtorch")]
 use std::convert::{TryFrom, TryInto};
 
 #[cfg(feature = "onnx")]
 use crate::pipelines::onnx::ONNXEncoder;
 use ndarray::Array2;
-#[cfg(feature = "onnx")]
-use ndarray::ArrayD;
 use rust_tokenizers::tokenizer::TruncationStrategy;
 #[cfg(feature = "libtorch")]
 use tch::{nn, Tensor};
@@ -16,14 +16,17 @@ use crate::albert::AlbertForSentenceEmbeddings;
 use crate::bert::BertForSentenceEmbeddings;
 #[cfg(feature = "libtorch")]
 use crate::distilbert::DistilBertForSentenceEmbeddings;
-use crate::pipelines::common::{ConfigOption, ModelType, TokenizerOption};
+#[cfg(feature = "libtorch")]
+use crate::pipelines::common::ConfigOption;
+use crate::pipelines::common::{ModelType, TokenizerOption};
 #[cfg(feature = "libtorch")]
 use crate::pipelines::sentence_embeddings::layers::Dense;
 use crate::pipelines::sentence_embeddings::layers::{DenseConfig, Pooling, PoolingConfig};
+#[cfg(feature = "libtorch")]
+use crate::pipelines::sentence_embeddings::{AttentionHead, AttentionLayer, AttentionOutput};
 use crate::pipelines::sentence_embeddings::{
-    AttentionHead, AttentionLayer, AttentionOutput, Embedding, SentenceEmbeddingsConfig,
-    SentenceEmbeddingsModulesConfig, SentenceEmbeddingsSentenceBertConfig,
-    SentenceEmbeddingsTokenizerConfig,
+    Embedding, SentenceEmbeddingsConfig, SentenceEmbeddingsModulesConfig,
+    SentenceEmbeddingsSentenceBertConfig, SentenceEmbeddingsTokenizerConfig,
 };
 #[cfg(feature = "libtorch")]
 use crate::roberta::RobertaForSentenceEmbeddings;
@@ -349,6 +352,7 @@ impl SentenceEmbeddingsModel {
             sentence_bert_config_resource.get_local_path()?,
         );
 
+        #[cfg_attr(not(feature = "libtorch"), allow(unused_variables))]
         let dense_out_features: Option<i64> = modules.dense_module().and_then(|_| {
             dense_config_resource
                 .as_ref()
@@ -360,15 +364,13 @@ impl SentenceEmbeddingsModel {
         let onnx_encoder = if transformer_type == ModelType::ONNX {
             Some(ONNXEncoder::new(
                 transformer_weights_resource.get_local_path()?,
-                &crate::pipelines::onnx::config::ONNXEnvironmentConfig::from_device(
-                    crate::Device::from(device),
-                ),
+                &crate::pipelines::onnx::config::ONNXEnvironmentConfig::from_device(device),
             )?)
         } else {
             None
         };
         #[cfg(not(all(feature = "onnx", feature = "remote")))]
-        let onnx_encoder: Option<()> = {
+        let _onnx_encoder: Option<()> = {
             let _ = transformer_type;
             None
         };
@@ -459,26 +461,20 @@ impl SentenceEmbeddingsModel {
             )
         };
         #[cfg(not(feature = "libtorch"))]
-        let (transformer, transformer_config, dense_layer, torch_dense_out_features) = {
-            let _ = (
-                transformer_type,
-                transformer_config_resource,
-                dense_config_resource,
-                dense_weights_resource,
-                device,
-            );
-            let dense_layer: Option<()> = None;
-            let torch_dense_out_features: Option<i64> = None;
+        let _ = (&transformer_config_resource, &dense_weights_resource);
+        #[cfg(not(feature = "libtorch"))]
+        let (transformer, _transformer_config, _dense_layer, _torch_dense_out_features) = {
             (
                 SentenceEmbeddingsOption::Onnx(onnx_encoder.unwrap()),
                 None::<()>,
-                dense_layer,
-                torch_dense_out_features,
+                None::<()>,
+                None::<i64>,
             )
         };
 
         // Setup pooling layer
         let pooling_config = PoolingConfig::from_file(pooling_config_resource.get_local_path()?);
+        #[cfg_attr(not(feature = "libtorch"), allow(unused_mut))]
         let mut embeddings_dim = pooling_config.word_embedding_dimension;
         let pooling_layer = Pooling::new(pooling_config);
 
@@ -669,6 +665,7 @@ impl SentenceEmbeddingsModel {
     where
         S: AsRef<str> + Send + Sync,
     {
+        #[cfg_attr(not(feature = "onnx"), allow(unused_variables))]
         let (tokens_ids, tokens_masks) = self.tokenize_arrays(inputs);
         if tokens_ids.nrows() == 0 {
             return Err(RustBertError::ValueError(
@@ -679,6 +676,7 @@ impl SentenceEmbeddingsModel {
         }
 
         #[cfg(feature = "onnx")]
+        #[cfg_attr(not(feature = "libtorch"), allow(irrefutable_let_patterns))]
         if let SentenceEmbeddingsOption::Onnx(encoder) = &self.transformer {
             let tokens_masks_ref = tokens_masks.clone();
             let output = encoder
@@ -724,6 +722,7 @@ impl SentenceEmbeddingsModel {
     }
 
     /// L2-normalizes each row of the array.
+    #[cfg_attr(not(feature = "onnx"), allow(dead_code))]
     fn normalize_rows(array: &Array2<f32>) -> Array2<f32> {
         let mut output = array.clone();
         for mut row in output.rows_mut().into_iter() {
@@ -740,7 +739,7 @@ impl SentenceEmbeddingsModel {
         use SentenceEmbeddingsOption::*;
         match (&self.transformer, &self.transformer_config) {
             #[cfg(feature = "onnx")]
-            (SentenceEmbeddingsOption::Onnx(_), _) => return 0,
+            (SentenceEmbeddingsOption::Onnx(_), _) => 0,
             #[cfg(feature = "libtorch")]
             (Bert(_), Some(ConfigOption::Bert(conf))) => conf.num_hidden_layers as usize,
             #[cfg(feature = "libtorch")]
@@ -769,7 +768,7 @@ impl SentenceEmbeddingsModel {
         use SentenceEmbeddingsOption::*;
         match (&self.transformer, &self.transformer_config) {
             #[cfg(feature = "onnx")]
-            (SentenceEmbeddingsOption::Onnx(_), _) => return 0,
+            (SentenceEmbeddingsOption::Onnx(_), _) => 0,
             #[cfg(feature = "libtorch")]
             (Bert(_), Some(ConfigOption::Bert(conf))) => conf.num_attention_heads as usize,
             #[cfg(feature = "libtorch")]

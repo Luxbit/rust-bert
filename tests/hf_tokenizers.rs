@@ -1,4 +1,3 @@
-#![cfg(feature = "libtorch")]
 #[cfg(feature = "hf-tokenizers")]
 mod tests {
     use rust_bert::gpt2::{Gpt2ConfigResources, Gpt2ModelResources};
@@ -6,9 +5,9 @@ mod tests {
     use rust_bert::pipelines::question_answering::{QaInput, QuestionAnsweringModel};
     use rust_bert::pipelines::text_generation::{TextGenerationConfig, TextGenerationModel};
     use rust_bert::resources::{LocalResource, RemoteResource, ResourceProvider};
+    use rust_bert::Device;
     use std::fs::File;
     use std::io::Write;
-    use tch::Device;
     use tempfile::TempDir;
 
     #[test]

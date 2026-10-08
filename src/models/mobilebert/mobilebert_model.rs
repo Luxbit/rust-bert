@@ -10,7 +10,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::common::activations::{Activation, TensorFunction};
+use crate::common::activations::TensorFunction;
 use crate::common::dropout::Dropout;
 use crate::common::embeddings::get_shape_and_device_from_ids_embeddings_pair;
 pub use crate::mobilebert::config::{
@@ -19,8 +19,7 @@ pub use crate::mobilebert::config::{
 };
 use crate::mobilebert::embeddings::MobileBertEmbeddings;
 use crate::mobilebert::encoder::{MobileBertEncoder, MobileBertPooler};
-use crate::{Config, RustBertError};
-use serde::{Deserialize, Serialize};
+use crate::RustBertError;
 use std::borrow::Borrow;
 
 use tch::nn::init::DEFAULT_KAIMING_UNIFORM;
@@ -33,11 +32,6 @@ impl MobileBertModelResources {
         "mobilebert-uncased/model",
         "https://huggingface.co/google/mobilebert-uncased/resolve/main/rust_model.ot",
     );
-    /// Shared under MIT license at <https://huggingface.co/mrm8488/mobilebert-finetuned-pos>. Modified with conversion to C-array format.
-    pub const MOBILEBERT_ENGLISH_POS: (&'static str, &'static str) = (
-        "mobilebert-finetuned-pos/model",
-        "https://huggingface.co/mrm8488/mobilebert-finetuned-pos/resolve/main/rust_model.ot",
-    );
 }
 
 impl MobileBertConfigResources {
@@ -46,11 +40,6 @@ impl MobileBertConfigResources {
         "mobilebert-uncased/config",
         "https://huggingface.co/google/mobilebert-uncased/resolve/main/config.json",
     );
-    /// Shared under MIT license at <https://huggingface.co/mrm8488/mobilebert-finetuned-pos>. Modified with conversion to C-array format.
-    pub const MOBILEBERT_ENGLISH_POS: (&'static str, &'static str) = (
-        "mobilebert-finetuned-pos/config",
-        "https://huggingface.co/mrm8488/mobilebert-finetuned-pos/resolve/main/config.json",
-    );
 }
 
 impl MobileBertVocabResources {
@@ -58,11 +47,6 @@ impl MobileBertVocabResources {
     pub const MOBILEBERT_UNCASED: (&'static str, &'static str) = (
         "mobilebert-uncased/vocab",
         "https://huggingface.co/google/mobilebert-uncased/resolve/main/vocab.txt",
-    );
-    /// Shared under MIT license at <https://huggingface.co/mrm8488/mobilebert-finetuned-pos>. Modified with conversion to C-array format.
-    pub const MOBILEBERT_ENGLISH_POS: (&'static str, &'static str) = (
-        "mobilebert-finetuned-pos/vocab",
-        "https://huggingface.co/mrm8488/mobilebert-finetuned-pos/resolve/main/vocab.txt",
     );
 }
 

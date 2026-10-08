@@ -1,3 +1,4 @@
+#![cfg(feature = "libtorch")]
 // Copyright 2019-present, the HuggingFace Inc. team, The Google AI Language Team and Facebook, Inc.
 // Copyright 2019 Guillaume Becquin
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,7 +21,7 @@ use rust_bert::bart::{
 use rust_bert::pipelines::common::ModelResource;
 use rust_bert::pipelines::summarization::{SummarizationConfig, SummarizationModel};
 use rust_bert::resources::{BufferResource, RemoteResource, ResourceProvider};
-use tch::Device;
+use rust_bert::Device;
 
 fn main() -> anyhow::Result<()> {
     let input = ["In findings published Tuesday in Cornell University's arXiv by a team of scientists \

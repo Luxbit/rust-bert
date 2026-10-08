@@ -143,6 +143,10 @@ impl PositionAttentionTypes {
     pub fn len(&self) -> usize {
         self.types.len()
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.types.is_empty()
+    }
 }
 
 pub fn deserialize_attention_type<'de, D>(

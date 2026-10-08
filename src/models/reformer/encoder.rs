@@ -306,9 +306,7 @@ impl ReformerEncoder {
         };
         let old_cache = old_layer_states.unwrap_or_else(|| vec![None; self.layers.len()]);
         let mut next_cache = vec![None; self.layers.len()];
-        for (layer_idx, (layer, old_cache)) in
-            self.layers.iter().zip(old_cache.into_iter()).enumerate()
-        {
+        for (layer_idx, (layer, old_cache)) in self.layers.iter().zip(old_cache).enumerate() {
             let temp = layer.forward_t(
                 &attention_output,
                 &hidden_state,

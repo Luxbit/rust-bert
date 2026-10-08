@@ -81,8 +81,22 @@
 //!
 //! # Getting started
 //!
-//! This library relies on the [tch](https://github.com/LaurentMazare/tch-rs) crate for bindings to the C++ Libtorch API.
-//! The libtorch library is required can be downloaded either automatically or manually. The following provides a reference on how to set-up your environment
+//! The crate supports two inference backends, selected via cargo features:
+//! - `libtorch` (enabled by default): the complete set of models and pipelines, running on the C++ LibTorch API via the [tch](https://github.com/LaurentMazare/tch-rs) crate.
+//! - `onnx`: inference on models exported to ONNX, running on the [onnxruntime](https://onnxruntime.ai) C++ library via the [ort](https://github.com/pykeio/ort) crate.
+//!
+//! At least one backend must be enabled. Every pipeline is available with the ONNX backend only, allowing to build and run this crate without any LibTorch dependency:
+//! ```toml
+//! [dependencies]
+//! rust-bert = { version = "0.24.0", default-features = false, features = ["onnx", "remote"] }
+//! ```
+//! With this configuration the models must be provided as ONNX exports (see the [ONNX Support](#onnx-support-optional) section below); PyTorch weight files (`.pt`) require the `libtorch` feature.
+//! The `cuda` feature (implied by `onnx`) enables the CUDA execution provider for onnxruntime.
+//!
+//! ## LibTorch installation (default `libtorch` feature)
+//!
+//! With the `libtorch` feature, this library relies on the [tch](https://github.com/LaurentMazare/tch-rs) crate for bindings to the C++ Libtorch API.
+//! The libtorch library can be downloaded either automatically or manually. The following provides a reference on how to set-up your environment
 //! to use these bindings, please refer to the [tch](https://github.com/LaurentMazare/tch-rs) for detailed information or support.
 //!
 //! Furthermore, this library relies on a cache folder for downloading pre-trained models.
@@ -114,7 +128,8 @@
 //!
 //! ## ONNX Support (Optional)
 //!
-//! ONNX support can be enabled via the optional `onnx` feature. This crate then leverages the [ort](https://github.com/pykeio/ort) crate with bindings to the onnxruntime C++ library. We refer the user to this page project for further installation instructions/support.
+//! ONNX support can be enabled via the optional `onnx` feature. This crate then leverages the [ort](https://github.com/pykeio/ort) crate (2.0) with bindings to the onnxruntime C++ library. We refer the user to this page project for further installation instructions/support.
+//! The `onnx` feature can be used standalone (with `default-features = false`) to run every pipeline without LibTorch, or alongside the default `libtorch` feature.
 //! 1. Enable the optional `onnx` feature. The `rust-bert` crate does not include any optional dependencies for `ort`, the end user should select the set of features that would be adequate for pulling the required `onnxruntime` C++ library.
 //! 2. The current recommended installation is to use dynamic linking by pointing to an existing library location. Use the `load-dynamic` cargo feature for `ort`.
 //! 3. set the `ORT_DYLIB_PATH` to point to the location of downloaded onnxruntime library (`onnxruntime.dll`/`libonnxruntime.so`/`libonnxruntime.dylib` depending on the operating system). These can be downloaded from the [release page](https://github.com/microsoft/onnxruntime/releases) of the onnxruntime project
@@ -723,7 +738,11 @@
 //! The list of ready-to-use pretrained models is listed at [https://huggingface.co/models?filter=rust](https://huggingface.co/models?filter=rust).
 
 // These are used abundantly in this code
-#![allow(clippy::assign_op_pattern, clippy::upper_case_acronyms)]
+#![allow(
+    clippy::assign_op_pattern,
+    clippy::upper_case_acronyms,
+    clippy::unnecessary_unwrap
+)]
 
 extern crate core;
 

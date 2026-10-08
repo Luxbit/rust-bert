@@ -39,6 +39,7 @@ pub enum SummaryType {
     cls_index,
 }
 
+#[cfg_attr(not(feature = "libtorch"), allow(dead_code))]
 pub struct SummaryConfig {
     pub summary_type: Option<SummaryType>,
     pub summary_use_proj: Option<bool>,
