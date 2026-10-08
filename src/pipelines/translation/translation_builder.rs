@@ -1,6 +1,6 @@
 use crate::pipelines::common::ModelType;
 
-#[cfg(feature = "libtorch")]
+#[cfg(all(feature = "remote", feature = "libtorch"))]
 pub(super) struct TranslationResources<R>
 where
     R: ResourceProvider + Send + 'static,

@@ -7,6 +7,14 @@ on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- Fixed the feature matrix so every backend combination compiles: the crate
+  previously failed to build with `onnx` but without `remote` (ungated
+  `RemoteResource` imports in the POS tagging pipeline, and the sentence
+  embeddings ONNX encoder block unnecessarily gated on `remote`) and with
+  `libtorch` but without `remote` (mismatched cfg on `TranslationResources`).
+  ONNX-only builds now work with local model resources, without the
+  `remote` feature.
+
 - Fixed an inverted attention mask in the sentence embeddings pipeline
   (padded positions were attended instead of real tokens), affecting all
   batched sentence embeddings and keywords extraction results.

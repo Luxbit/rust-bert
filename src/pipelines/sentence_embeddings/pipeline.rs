@@ -360,7 +360,7 @@ impl SentenceEmbeddingsModel {
                 .map(|path| DenseConfig::from_file(path).out_features)
         });
 
-        #[cfg(all(feature = "onnx", feature = "remote"))]
+        #[cfg(feature = "onnx")]
         let onnx_encoder = if transformer_type == ModelType::ONNX {
             Some(ONNXEncoder::new(
                 transformer_weights_resource.get_local_path()?,
@@ -369,7 +369,7 @@ impl SentenceEmbeddingsModel {
         } else {
             None
         };
-        #[cfg(not(all(feature = "onnx", feature = "remote")))]
+        #[cfg(not(feature = "onnx"))]
         let _onnx_encoder: Option<()> = {
             let _ = transformer_type;
             None
