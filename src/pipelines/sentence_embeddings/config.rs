@@ -1,11 +1,14 @@
 use serde::{Deserialize, Serialize};
-use tch::{Device, Kind};
 
 use crate::pipelines::common::ModelType;
 use crate::resources::ResourceProvider;
-use crate::{Config, RustBertError};
+use crate::Config;
+use crate::Device;
+use crate::RustBertError;
+#[cfg(feature = "libtorch")]
+use tch::Kind;
 
-#[cfg(feature = "remote")]
+#[cfg(all(feature = "remote", feature = "libtorch"))]
 use crate::{
     albert::{AlbertConfigResources, AlbertModelResources, AlbertVocabResources},
     bert::{BertConfigResources, BertModelResources, BertVocabResources},
@@ -56,10 +59,12 @@ pub struct SentenceEmbeddingsConfig {
     /// Device to place the transformer model on
     pub device: Device,
     /// Model weights precision. If not provided, will default to full precision on CPU, or the loaded weights precision otherwise
+    #[cfg(feature = "libtorch")]
     pub kind: Option<Kind>,
 }
 
 #[cfg(feature = "remote")]
+#[cfg(all(feature = "remote", feature = "libtorch"))]
 impl From<SentenceEmbeddingsModelType> for SentenceEmbeddingsConfig {
     fn from(model_type: SentenceEmbeddingsModelType) -> Self {
         match model_type {
@@ -94,6 +99,7 @@ impl From<SentenceEmbeddingsModelType> for SentenceEmbeddingsConfig {
                 )),
                 tokenizer_merges_resource: None,
                 device: Device::cuda_if_available(),
+                #[cfg(feature = "libtorch")]
                 kind: None,
             },
 
@@ -124,6 +130,7 @@ impl From<SentenceEmbeddingsModelType> for SentenceEmbeddingsConfig {
                 )),
                 tokenizer_merges_resource: None,
                 device: Device::cuda_if_available(),
+                #[cfg(feature = "libtorch")]
                 kind: None,
             },
 

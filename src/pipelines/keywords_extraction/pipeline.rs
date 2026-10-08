@@ -92,7 +92,7 @@ pub struct KeywordExtractionConfig<'a> {
     pub max_sum_candidates: Option<usize>,
 }
 
-#[cfg(feature = "remote")]
+#[cfg(all(feature = "remote", feature = "libtorch"))]
 impl Default for KeywordExtractionConfig<'_> {
     fn default() -> Self {
         let sentence_embeddings_config =
@@ -227,25 +227,25 @@ impl<'a> KeywordExtractionModel<'a> {
         let (flat_word_list, document_boundaries) =
             KeywordExtractionModel::flatten_word_list(&words);
 
-        let document_embeddings = self
-            .sentence_embeddings_model
-            .encode_as_tensor(inputs)?
-            .embeddings;
+        let document_embeddings = self.sentence_embeddings_model.encode_arrays(inputs)?;
 
         let word_embeddings = self
             .sentence_embeddings_model
-            .encode_as_tensor(&flat_word_list)?;
+            .encode_arrays(&flat_word_list)?;
 
         let mut output_keywords: Vec<Vec<Keyword>> = Vec::new();
         for (document_index, (start, end)) in document_boundaries.into_iter().enumerate() {
             let mut document_keywords = Vec::new();
             let document_embedding = document_embeddings
-                .select(0, document_index as i64)
-                .unsqueeze(0);
+                .slice(ndarray::s![
+                    document_index as usize..(document_index + 1) as usize,
+                    ..
+                ])
+                .to_owned();
             let word_embeddings = word_embeddings
-                .embeddings
-                .slice(0, start as i64, end as i64, 1);
-            let num_keywords = min(self.num_keywords, word_embeddings.size()[0] as usize);
+                .slice(ndarray::s![start as usize..end as usize, ..])
+                .to_owned();
+            let num_keywords = min(self.num_keywords, word_embeddings.nrows());
             let local_top_word_indices = self.scorer_type.score_keywords(
                 document_embedding,
                 word_embeddings,

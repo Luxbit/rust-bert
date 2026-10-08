@@ -1,10 +1,16 @@
+use serde::{de, Deserialize, Deserializer};
 use std::path::Path;
 
-use serde::{de, Deserialize, Deserializer};
+use crate::common::activations::Activation;
+#[cfg(feature = "libtorch")]
+use crate::common::activations::TensorFunction;
+use crate::Config;
+#[cfg(feature = "libtorch")]
+use crate::RustBertError;
+#[cfg(feature = "onnx")]
+use ndarray::{Array2, Array3};
+#[cfg(feature = "libtorch")]
 use tch::{nn, Device, Kind, Tensor};
-
-use crate::common::activations::{Activation, TensorFunction};
-use crate::{Config, RustBertError};
 
 /// Configuration for [`Pooling`](Pooling) layer.
 #[derive(Debug, Deserialize)]
@@ -36,6 +42,7 @@ impl Pooling {
         Pooling { conf }
     }
 
+    #[cfg(feature = "libtorch")]
     pub fn forward(&self, mut token_embeddings: Tensor, attention_mask: &Tensor) -> Tensor {
         let mut output_vectors = Vec::new();
 
@@ -110,12 +117,14 @@ where
 ///
 /// This layer takes a fixed-sized sentence embedding and passes it through a
 /// feed-forward layer. Can be used to generate deep averaging networs (DAN).
+#[cfg(feature = "libtorch")]
 pub struct Dense {
     linear: nn::Linear,
     activation: TensorFunction,
     _var_store: nn::VarStore,
 }
 
+#[cfg(feature = "libtorch")]
 impl Dense {
     pub fn new<P: AsRef<Path>>(
         dense_conf: DenseConfig,
@@ -149,5 +158,88 @@ impl Dense {
 
     pub fn forward(&self, x: &Tensor) -> Tensor {
         self.activation.get_fn()(&x.apply(&self.linear))
+    }
+}
+
+impl Pooling {
+    /// Pool token embeddings (batch, sequence, hidden) into sentence embeddings
+    /// (batch, output_dim) using `ndarray`, for the ONNX backend.
+    #[cfg(feature = "onnx")]
+    pub fn forward_array(
+        &self,
+        token_embeddings: &ndarray::Array3<f32>,
+        attention_mask: &ndarray::Array2<i64>,
+    ) -> ndarray::Array2<f32> {
+        let (batch, seq, hidden) = (
+            token_embeddings.shape()[0],
+            token_embeddings.shape()[1],
+            token_embeddings.shape()[2],
+        );
+        let mut output_vectors: Vec<ndarray::Array2<f32>> = Vec::new();
+
+        if self.conf.pooling_mode_cls_token {
+            let mut cls = ndarray::Array2::<f32>::zeros((batch, hidden));
+            for b in 0..batch {
+                for h in 0..hidden {
+                    cls[[b, h]] = token_embeddings[[b, 0, h]];
+                }
+            }
+            output_vectors.push(cls);
+        }
+
+        if self.conf.pooling_mode_max_tokens {
+            let mut max_pool =
+                ndarray::Array2::<f32>::from_elem((batch, hidden), f32::NEG_INFINITY);
+            for b in 0..batch {
+                for s in 0..seq {
+                    if attention_mask[[b, s]] == 0 {
+                        continue;
+                    }
+                    for h in 0..hidden {
+                        max_pool[[b, h]] = max_pool[[b, h]].max(token_embeddings[[b, s, h]]);
+                    }
+                }
+            }
+            output_vectors.push(max_pool);
+        }
+
+        if self.conf.pooling_mode_mean_tokens || self.conf.pooling_mode_mean_sqrt_len_tokens {
+            let mut sum_embeddings = ndarray::Array2::<f32>::zeros((batch, hidden));
+            let mut sum_mask = ndarray::Array2::<f32>::zeros((batch, 1));
+            for b in 0..batch {
+                let mut count = 0f32;
+                for s in 0..seq {
+                    if attention_mask[[b, s]] == 0 {
+                        continue;
+                    }
+                    count += 1f32;
+                    for h in 0..hidden {
+                        sum_embeddings[[b, h]] += token_embeddings[[b, s, h]];
+                    }
+                }
+                sum_mask[[b, 0]] = count.max(10e-9);
+            }
+            if self.conf.pooling_mode_mean_tokens {
+                output_vectors.push(sum_embeddings.clone() / &sum_mask);
+            }
+            if self.conf.pooling_mode_mean_sqrt_len_tokens {
+                let sqrt_mask = sum_mask.mapv(|value| value.sqrt());
+                output_vectors.push(sum_embeddings / &sqrt_mask);
+            }
+        }
+
+        // concatenate pooling outputs along the hidden dimension
+        let total_dim: usize = output_vectors.iter().map(|v| v.ncols()).sum();
+        let mut output = ndarray::Array2::<f32>::zeros((batch, total_dim));
+        let mut offset = 0;
+        for vector in output_vectors {
+            for b in 0..batch {
+                for h in 0..vector.ncols() {
+                    output[[b, offset + h]] = vector[[b, h]];
+                }
+            }
+            offset += vector.ncols();
+        }
+        output
     }
 }

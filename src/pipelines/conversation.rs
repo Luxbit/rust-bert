@@ -54,20 +54,22 @@
 //! The authors of this repository are not responsible for any generation
 //! from the 3rd party utilization of the pretrained system.
 use crate::common::error::RustBertError;
-use crate::gpt2::GPT2Generator;
+
 use crate::pipelines::common::{ModelResource, ModelType, TokenizerOption};
 use crate::pipelines::generation_utils::private_generation_utils::PrivateLanguageGenerator;
 use crate::pipelines::generation_utils::{GenerateConfig, LanguageGenerator};
+#[cfg(feature = "onnx")]
+use crate::pipelines::onnx::ONNXCausalGenerator;
 use crate::resources::ResourceProvider;
+use crate::Device;
+use ndarray::Array2;
 use std::collections::HashMap;
-use tch::{Device, Kind, Tensor};
+#[cfg(feature = "libtorch")]
+use tch::{Kind, Tensor};
 use uuid::Uuid;
 
 #[cfg(feature = "remote")]
-use crate::{
-    gpt2::{Gpt2ConfigResources, Gpt2MergesResources, Gpt2ModelResources, Gpt2VocabResources},
-    resources::RemoteResource,
-};
+use crate::resources::RemoteResource;
 
 /// # Configuration for multi-turn classification
 /// Contains information regarding the model to load, mirrors the GenerationConfig, with a
@@ -116,25 +118,31 @@ pub struct ConversationConfig {
     /// Device to place the model on (default: CUDA/GPU when available)
     pub device: Device,
     /// Model weights precision. If not provided, will default to full precision on CPU, or the loaded weights precision otherwise
+    #[cfg(feature = "libtorch")]
     pub kind: Option<Kind>,
 }
 
+#[cfg(feature = "remote")]
 #[cfg(feature = "remote")]
 impl Default for ConversationConfig {
     fn default() -> ConversationConfig {
         ConversationConfig {
             model_type: ModelType::GPT2,
-            model_resource: ModelResource::Torch(Box::new(RemoteResource::from_pretrained(
-                Gpt2ModelResources::DIALOGPT_MEDIUM,
+            model_resource: ModelResource::Torch(Box::new(RemoteResource::new(
+                "https://huggingface.co/microsoft/DialoGPT-medium/resolve/main/rust_model.ot",
+                "dialogpt-medium/model",
             ))),
-            config_resource: Box::new(RemoteResource::from_pretrained(
-                Gpt2ConfigResources::DIALOGPT_MEDIUM,
+            config_resource: Box::new(RemoteResource::new(
+                "https://huggingface.co/microsoft/DialoGPT-medium/resolve/main/config.json",
+                "dialogpt-medium/config",
             )),
-            vocab_resource: Box::new(RemoteResource::from_pretrained(
-                Gpt2VocabResources::DIALOGPT_MEDIUM,
+            vocab_resource: Box::new(RemoteResource::new(
+                "https://huggingface.co/microsoft/DialoGPT-medium/resolve/main/vocab.json",
+                "dialogpt-medium/vocab",
             )),
-            merges_resource: Some(Box::new(RemoteResource::from_pretrained(
-                Gpt2MergesResources::DIALOGPT_MEDIUM,
+            merges_resource: Some(Box::new(RemoteResource::new(
+                "https://huggingface.co/microsoft/DialoGPT-medium/resolve/main/merges.txt",
+                "dialogpt-medium/merges",
             ))),
             min_length: 0,
             max_length: Some(1000),
@@ -152,6 +160,7 @@ impl Default for ConversationConfig {
             num_beam_groups: None,
             diversity_penalty: None,
             device: Device::cuda_if_available(),
+            #[cfg(feature = "libtorch")]
             kind: None,
         }
     }
@@ -179,7 +188,8 @@ impl From<ConversationConfig> for GenerateConfig {
             num_return_sequences: config.num_return_sequences,
             num_beam_groups: config.num_beam_groups,
             diversity_penalty: config.diversity_penalty,
-            device: crate::Device::from(config.device),
+            device: config.device,
+            #[cfg(feature = "libtorch")]
             kind: config.kind,
         }
     }
@@ -700,15 +710,32 @@ impl Default for ConversationManager {
 /// # Abstraction that holds one particular conversation model, for any of the supported models
 pub enum ConversationOption {
     /// Conversation based on GPT2 model
-    GPT2(GPT2Generator),
+    #[cfg(feature = "libtorch")]
+    GPT2(torch_models::GPT2Generator),
+    /// Conversation based on an ONNX model (causal generator)
+    #[cfg(feature = "onnx")]
+    ONNX(ONNXCausalGenerator),
+}
+
+#[cfg(feature = "libtorch")]
+mod torch_models {
+    pub use crate::gpt2::GPT2Generator;
 }
 
 impl ConversationOption {
     pub fn new(config: ConversationConfig) -> Result<Self, RustBertError> {
-        match config.model_type {
-            ModelType::GPT2 => Ok(ConversationOption::GPT2(GPT2Generator::new(config.into())?)),
+        match (&config.model_type, &config.model_resource) {
+            #[cfg(feature = "libtorch")]
+            (ModelType::GPT2, ModelResource::Torch(_)) => Ok(ConversationOption::GPT2(
+                torch_models::GPT2Generator::new(config.into())?,
+            )),
+            #[cfg(feature = "onnx")]
+            (_, ModelResource::ONNX(_)) => Ok(ConversationOption::ONNX(ONNXCausalGenerator::new(
+                config.into(),
+                None,
+            )?)),
             _ => Err(RustBertError::InvalidConfigurationError(
-                "GPT2 is currently the only supported model for conversation generation"
+                "Unsupported model type / resource combination for conversation generation"
                     .to_string(),
             )),
         }
@@ -718,13 +745,17 @@ impl ConversationOption {
         config: ConversationConfig,
         tokenizer: TokenizerOption,
     ) -> Result<Self, RustBertError> {
-        match config.model_type {
-            ModelType::GPT2 => Ok(ConversationOption::GPT2(GPT2Generator::new_with_tokenizer(
-                config.into(),
-                tokenizer,
-            )?)),
+        match (&config.model_type, &config.model_resource) {
+            #[cfg(feature = "libtorch")]
+            (ModelType::GPT2, ModelResource::Torch(_)) => Ok(ConversationOption::GPT2(
+                torch_models::GPT2Generator::new_with_tokenizer(config.into(), tokenizer)?,
+            )),
+            #[cfg(feature = "onnx")]
+            (_, ModelResource::ONNX(_)) => Ok(ConversationOption::ONNX(
+                ONNXCausalGenerator::new_with_tokenizer(config.into(), tokenizer, None)?,
+            )),
             _ => Err(RustBertError::InvalidConfigurationError(
-                "GPT2 is currently the only supported model for conversation generation"
+                "Unsupported model type / resource combination for conversation generation"
                     .to_string(),
             )),
         }
@@ -732,7 +763,12 @@ impl ConversationOption {
 
     pub fn get_eos_id(&self) -> Result<i64, RustBertError> {
         match self {
+            #[cfg(feature = "libtorch")]
             Self::GPT2(model_ref) => {
+                Ok(*model_ref.get_eos_ids().as_ref().unwrap().first().unwrap())
+            }
+            #[cfg(feature = "onnx")]
+            Self::ONNX(model_ref) => {
                 Ok(*model_ref.get_eos_ids().as_ref().unwrap().first().unwrap())
             }
         }
@@ -741,47 +777,49 @@ impl ConversationOption {
     /// Get a reference to the model tokenizer.
     pub fn get_tokenizer(&self) -> &TokenizerOption {
         match self {
+            #[cfg(feature = "libtorch")]
             Self::GPT2(model_ref) => model_ref._get_tokenizer(),
+            #[cfg(feature = "onnx")]
+            Self::ONNX(model_ref) => model_ref.get_tokenizer(),
         }
     }
 
     /// Get a mutable reference to the model tokenizer.
     pub fn get_tokenizer_mut(&mut self) -> &TokenizerOption {
         match self {
+            #[cfg(feature = "libtorch")]
             Self::GPT2(model_ref) => model_ref._get_tokenizer_mut(),
+            #[cfg(feature = "onnx")]
+            Self::ONNX(model_ref) => model_ref.get_tokenizer_mut(),
         }
     }
 
     /// Returns the `ModelType` for this ConversationOption
     pub fn model_type(&self) -> ModelType {
         match *self {
+            #[cfg(feature = "libtorch")]
             Self::GPT2(_) => ModelType::GPT2,
+            #[cfg(feature = "onnx")]
+            Self::ONNX(_) => ModelType::ONNX,
         }
     }
 
     /// Interface method to generate_from_ids_and_past() of the particular models.
     pub fn generate_from_ids_and_past(
         &self,
-        input_ids: Tensor,
-        attention_mask: Option<Tensor>,
+        input_ids: Array2<i64>,
+        attention_mask: Option<Array2<i64>>,
     ) -> Result<Vec<Vec<i64>>, RustBertError> {
         Ok(match *self {
+            #[cfg(feature = "libtorch")]
             Self::GPT2(ref model) => model
-                .generate_from_ids_and_past(
-                    crate::common::tensor_conversion::tensor_to_array_i64(&input_ids)
-                        .expect("Error converting input")
-                        .into_dimensionality::<ndarray::Ix2>()
-                        .unwrap(),
-                    Some(
-                        crate::common::tensor_conversion::tensor_to_array_i64(
-                            attention_mask.as_ref().unwrap(),
-                        )
-                        .expect("Error converting attention mask")
-                        .into_dimensionality::<ndarray::Ix2>()
-                        .unwrap(),
-                    ),
-                    None,
-                )?
+                .generate_from_ids_and_past(input_ids, attention_mask, None)?
+                .into_iter()
+                .map(|output| output.indices)
+                .collect(),
+            #[cfg(feature = "onnx")]
+            Self::ONNX(ref model) => model
+                .generate_from_ids_and_past(input_ids, attention_mask, None)?
                 .into_iter()
                 .map(|output| output.indices)
                 .collect(),
@@ -918,7 +956,7 @@ impl ConversationModel {
             let prompt_ids = self.encode_prompts(texts.as_ref());
             let (input_tensor, attention_mask) =
                 self.concat_input_history(prompt_ids.as_ref(), history);
-            let input_length = *input_tensor.size().last().unwrap() as usize;
+            let input_length = input_tensor.ncols();
             let mut generated = self
                 .model
                 .generate_from_ids_and_past(input_tensor, Some(attention_mask))?;
@@ -986,7 +1024,7 @@ impl ConversationModel {
         &self,
         inputs: &[Vec<i64>],
         history: Vec<Vec<i64>>,
-    ) -> (Tensor, Tensor) {
+    ) -> (Array2<i64>, Array2<i64>) {
         // Concatenates the history token indices with new user input
         let pad_token = self
             .model
@@ -1031,27 +1069,18 @@ impl ConversationModel {
             .max()
             .unwrap();
 
-        let attention_mask = Tensor::ones(
-            [inputs.len() as i64, max_len as i64],
-            (Kind::Int8, self.device),
-        );
+        let mut concatenated_inputs = Array2::<i64>::from_elem((inputs.len(), max_len), pad_token);
+        let mut attention_mask = Array2::<i64>::zeros((inputs.len(), max_len));
+        for (input_idx, input) in truncated_concatenated_inputs.into_iter().enumerate() {
+            for (col, &token) in input.iter().enumerate() {
+                concatenated_inputs[[input_idx, max_len - input.len() + col]] = token;
+            }
+            for col in 0..max_len - input.len() {
+                attention_mask[[input_idx, col]] = 0;
+            }
+        }
 
-        let concatenated_inputs = truncated_concatenated_inputs
-            .into_iter()
-            .enumerate()
-            .map(|(input_idx, input)| {
-                let _ = attention_mask
-                    .get(input_idx as i64)
-                    .slice(0, 0, (max_len - input.len()) as i64, 1)
-                    .fill_(0);
-                let mut padded_input = vec![pad_token; max_len - input.len()];
-                padded_input.extend(input);
-                padded_input
-            })
-            .map(|tokens| Tensor::from_slice(&tokens).to(self.device))
-            .collect::<Vec<Tensor>>();
-
-        (Tensor::stack(&concatenated_inputs, 0), attention_mask)
+        (concatenated_inputs, attention_mask)
     }
 
     fn get_truncated_input_index(

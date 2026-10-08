@@ -1,35 +1,57 @@
 use std::borrow::Borrow;
 use std::convert::{TryFrom, TryInto};
 
+#[cfg(feature = "onnx")]
+use crate::pipelines::onnx::ONNXEncoder;
+use ndarray::Array2;
+#[cfg(feature = "onnx")]
+use ndarray::ArrayD;
 use rust_tokenizers::tokenizer::TruncationStrategy;
+#[cfg(feature = "libtorch")]
 use tch::{nn, Tensor};
 
+#[cfg(feature = "libtorch")]
 use crate::albert::AlbertForSentenceEmbeddings;
+#[cfg(feature = "libtorch")]
 use crate::bert::BertForSentenceEmbeddings;
+#[cfg(feature = "libtorch")]
 use crate::distilbert::DistilBertForSentenceEmbeddings;
 use crate::pipelines::common::{ConfigOption, ModelType, TokenizerOption};
-use crate::pipelines::sentence_embeddings::layers::{Dense, DenseConfig, Pooling, PoolingConfig};
+#[cfg(feature = "libtorch")]
+use crate::pipelines::sentence_embeddings::layers::Dense;
+use crate::pipelines::sentence_embeddings::layers::{DenseConfig, Pooling, PoolingConfig};
 use crate::pipelines::sentence_embeddings::{
     AttentionHead, AttentionLayer, AttentionOutput, Embedding, SentenceEmbeddingsConfig,
     SentenceEmbeddingsModulesConfig, SentenceEmbeddingsSentenceBertConfig,
     SentenceEmbeddingsTokenizerConfig,
 };
+#[cfg(feature = "libtorch")]
 use crate::roberta::RobertaForSentenceEmbeddings;
+#[cfg(feature = "libtorch")]
 use crate::t5::T5ForSentenceEmbeddings;
 use crate::{Config, RustBertError};
 
 /// # Abstraction that holds one particular sentence embeddings model, for any of the supported models
 pub enum SentenceEmbeddingsOption {
     /// Bert for Sentence Embeddings
+    #[cfg(feature = "libtorch")]
     Bert(BertForSentenceEmbeddings),
     /// DistilBert for Sentence Embeddings
+    #[cfg(feature = "libtorch")]
     DistilBert(DistilBertForSentenceEmbeddings),
     /// Roberta for Sentence Embeddings
+    #[cfg(feature = "libtorch")]
     Roberta(RobertaForSentenceEmbeddings),
     /// Albert for Sentence Embeddings
+    #[cfg(feature = "libtorch")]
     Albert(AlbertForSentenceEmbeddings),
     /// T5 for Sentence Embeddings
+    #[cfg(feature = "libtorch")]
     T5(T5ForSentenceEmbeddings),
+    /// ONNX encoder for Sentence Embeddings. Pooling/dense/normalization modules
+    /// are assumed to be part of the exported ONNX graph.
+    #[cfg(feature = "onnx")]
+    Onnx(ONNXEncoder),
 }
 
 impl SentenceEmbeddingsOption {
@@ -40,6 +62,7 @@ impl SentenceEmbeddingsOption {
     /// * `transformer_type` - `ModelType` indicating the transformer model type to load (must match with the actual data to be loaded)
     /// * `p` - `tch::nn::Path` path to the model file to load (e.g. rust_model.ot)
     /// * `config` - A configuration (the transformer model type of the configuration must be compatible with the value for `transformer_type`)
+    #[cfg(feature = "libtorch")]
     pub fn new<'p, P>(
         transformer_type: ModelType,
         p: P,
@@ -51,17 +74,22 @@ impl SentenceEmbeddingsOption {
         use SentenceEmbeddingsOption::*;
 
         let option = match transformer_type {
+            #[cfg(feature = "libtorch")]
             ModelType::Bert => Bert(BertForSentenceEmbeddings::new(p, &(config.try_into()?))),
+            #[cfg(feature = "libtorch")]
             ModelType::DistilBert => DistilBert(DistilBertForSentenceEmbeddings::new(
                 p,
                 &(config.try_into()?),
             )),
+            #[cfg(feature = "libtorch")]
             ModelType::Roberta => Roberta(RobertaForSentenceEmbeddings::new_with_optional_pooler(
                 p,
                 &(config.try_into()?),
                 false,
             )),
+            #[cfg(feature = "libtorch")]
             ModelType::Albert => Albert(AlbertForSentenceEmbeddings::new(p, &(config.try_into()?))),
+            #[cfg(feature = "libtorch")]
             ModelType::T5 => T5(T5ForSentenceEmbeddings::new(p, &(config.try_into()?))),
             _ => {
                 return Err(RustBertError::InvalidConfigurationError(format!(
@@ -74,12 +102,77 @@ impl SentenceEmbeddingsOption {
     }
 
     /// Interface method to forward() of the particular transformer models.
+    #[cfg(feature = "libtorch")]
     pub fn forward(
         &self,
         tokens_ids: &Tensor,
         tokens_masks: &Tensor,
     ) -> Result<(Tensor, Option<Vec<Tensor>>), RustBertError> {
+        #[cfg(feature = "onnx")]
+        if let Self::Onnx(encoder) = self {
+            let ids = crate::common::tensor_conversion::tensor_to_array_i64(tokens_ids)?;
+            let mask = crate::common::tensor_conversion::tensor_to_array_i64(tokens_masks)?;
+            let hidden = encoder
+                .forward(
+                    Some(&ids.into_dyn()),
+                    Some(&mask.into_dyn()),
+                    None,
+                    None,
+                    None,
+                )?
+                .last_hidden_state
+                .ok_or_else(|| {
+                    RustBertError::ValueError(
+                        "ONNX model did not return last_hidden_state".to_string(),
+                    )
+                })?;
+            let logits = crate::common::tensor_conversion::array_to_tensor_f32(&hidden)?;
+            return Ok((logits, None));
+        }
+        #[cfg(feature = "onnx")]
+        if let Self::Onnx(encoder) = self {
+            let ids = crate::common::tensor_conversion::tensor_to_array_i64(tokens_ids)?;
+            let mask = crate::common::tensor_conversion::tensor_to_array_i64(tokens_masks)?;
+            let hidden = encoder
+                .forward(
+                    Some(&ids.into_dyn()),
+                    Some(&mask.into_dyn()),
+                    None,
+                    None,
+                    None,
+                )?
+                .last_hidden_state
+                .ok_or_else(|| {
+                    RustBertError::ValueError(
+                        "ONNX model did not return last_hidden_state".to_string(),
+                    )
+                })?;
+            let logits = crate::common::tensor_conversion::array_to_tensor_f32(&hidden)?;
+            return Ok((logits, None));
+        }
         match self {
+            #[cfg(feature = "onnx")]
+            Self::Onnx(encoder) => {
+                let ids = crate::common::tensor_conversion::tensor_to_array_i64(tokens_ids)?;
+                let mask = crate::common::tensor_conversion::tensor_to_array_i64(tokens_masks)?;
+                let hidden = encoder
+                    .forward(
+                        Some(&ids.into_dyn()),
+                        Some(&mask.into_dyn()),
+                        None,
+                        None,
+                        None,
+                    )?
+                    .last_hidden_state
+                    .ok_or_else(|| {
+                        RustBertError::ValueError(
+                            "ONNX model did not return last_hidden_state".to_string(),
+                        )
+                    })?;
+                let logits = crate::common::tensor_conversion::array_to_tensor_f32(&hidden)?;
+                Ok((logits, None))
+            }
+            #[cfg(feature = "libtorch")]
             Self::Bert(transformer) => transformer
                 .forward_t(
                     Some(tokens_ids),
@@ -97,6 +190,7 @@ impl SentenceEmbeddingsOption {
                         transformer_output.all_attentions,
                     )
                 }),
+            #[cfg(feature = "libtorch")]
             Self::DistilBert(transformer) => transformer
                 .forward_t(Some(tokens_ids), Some(tokens_masks), None, false)
                 .map(|transformer_output| {
@@ -105,6 +199,7 @@ impl SentenceEmbeddingsOption {
                         transformer_output.all_attentions,
                     )
                 }),
+            #[cfg(feature = "libtorch")]
             Self::Roberta(transformer) => transformer
                 .forward_t(
                     Some(tokens_ids),
@@ -122,6 +217,7 @@ impl SentenceEmbeddingsOption {
                         transformer_output.all_attentions,
                     )
                 }),
+            #[cfg(feature = "libtorch")]
             Self::Albert(transformer) => transformer
                 .forward_t(
                     Some(tokens_ids),
@@ -145,6 +241,7 @@ impl SentenceEmbeddingsOption {
                         }),
                     )
                 }),
+            #[cfg(feature = "libtorch")]
             Self::T5(transformer) => transformer.forward(tokens_ids, tokens_masks),
         }
     }
@@ -161,10 +258,13 @@ pub struct SentenceEmbeddingsModel {
     sentence_bert_config: SentenceEmbeddingsSentenceBertConfig,
     tokenizer: TokenizerOption,
     tokenizer_truncation_strategy: TruncationStrategy,
+    #[cfg(feature = "libtorch")]
     var_store: nn::VarStore,
     transformer: SentenceEmbeddingsOption,
-    transformer_config: ConfigOption,
+    #[cfg(feature = "libtorch")]
+    transformer_config: Option<ConfigOption>,
     pooling_layer: Pooling,
+    #[cfg(feature = "libtorch")]
     dense_layer: Option<Dense>,
     normalize_embeddings: bool,
     embeddings_dim: i64,
@@ -236,7 +336,9 @@ impl SentenceEmbeddingsModel {
             dense_config_resource,
             dense_weights_resource,
             device,
+            #[cfg(feature = "libtorch")]
             kind,
+            ..
         } = config;
 
         let modules =
@@ -247,54 +349,177 @@ impl SentenceEmbeddingsModel {
             sentence_bert_config_resource.get_local_path()?,
         );
 
-        // Setup transformer
-        let mut var_store = nn::VarStore::new(device);
-        let transformer_config = ConfigOption::from_file(
-            transformer_type,
-            transformer_config_resource.get_local_path()?,
-        );
-        let transformer =
-            SentenceEmbeddingsOption::new(transformer_type, var_store.root(), &transformer_config)?;
-        crate::resources::load_weights(
-            &transformer_weights_resource,
-            &mut var_store,
-            kind,
-            device,
-        )?;
+        let dense_out_features: Option<i64> = modules.dense_module().and_then(|_| {
+            dense_config_resource
+                .as_ref()
+                .and_then(|resource| resource.get_local_path().ok())
+                .map(|path| DenseConfig::from_file(path).out_features)
+        });
+
+        #[cfg(all(feature = "onnx", feature = "remote"))]
+        let onnx_encoder = if transformer_type == ModelType::ONNX {
+            Some(ONNXEncoder::new(
+                transformer_weights_resource.get_local_path()?,
+                &crate::pipelines::onnx::config::ONNXEnvironmentConfig::from_device(
+                    crate::Device::from(device),
+                ),
+            )?)
+        } else {
+            None
+        };
+        #[cfg(not(all(feature = "onnx", feature = "remote")))]
+        let onnx_encoder: Option<()> = {
+            let _ = transformer_type;
+            None
+        };
+
+        #[cfg(all(feature = "libtorch", feature = "onnx"))]
+        let (transformer, transformer_config, var_store, dense_layer, torch_dense_out_features) =
+            if onnx_encoder.is_some() {
+                (
+                    SentenceEmbeddingsOption::Onnx(onnx_encoder.unwrap()),
+                    None,
+                    nn::VarStore::new(tch::Device::Cpu),
+                    None,
+                    dense_out_features,
+                )
+            } else {
+                let mut var_store = nn::VarStore::new(device.into());
+                let transformer_config = ConfigOption::from_file(
+                    transformer_type,
+                    transformer_config_resource.get_local_path()?,
+                );
+                let transformer = SentenceEmbeddingsOption::new(
+                    transformer_type,
+                    var_store.root(),
+                    &transformer_config,
+                )?;
+                crate::resources::load_weights(
+                    &transformer_weights_resource,
+                    &mut var_store,
+                    kind,
+                    device.into(),
+                )?;
+
+                let dense_layer = if modules.dense_module().is_some() {
+                    let dense_config =
+                        DenseConfig::from_file(dense_config_resource.unwrap().get_local_path()?);
+                    Some(Dense::new(
+                        dense_config,
+                        dense_weights_resource.unwrap().get_local_path()?,
+                        device.into(),
+                    )?)
+                } else {
+                    None
+                };
+                (
+                    transformer,
+                    Some(transformer_config),
+                    var_store,
+                    dense_layer,
+                    dense_out_features,
+                )
+            };
+        #[cfg(all(feature = "libtorch", not(feature = "onnx")))]
+        let (transformer, transformer_config, var_store, dense_layer, torch_dense_out_features) = {
+            let mut var_store = nn::VarStore::new(device.into());
+            let transformer_config = ConfigOption::from_file(
+                transformer_type,
+                transformer_config_resource.get_local_path()?,
+            );
+            let transformer = SentenceEmbeddingsOption::new(
+                transformer_type,
+                var_store.root(),
+                &transformer_config,
+            )?;
+            crate::resources::load_weights(
+                &transformer_weights_resource,
+                &mut var_store,
+                kind,
+                device.into(),
+            )?;
+
+            let dense_layer = if modules.dense_module().is_some() {
+                let dense_config =
+                    DenseConfig::from_file(dense_config_resource.unwrap().get_local_path()?);
+                Some(Dense::new(
+                    dense_config,
+                    dense_weights_resource.unwrap().get_local_path()?,
+                    device.into(),
+                )?)
+            } else {
+                None
+            };
+            (
+                transformer,
+                Some(transformer_config),
+                var_store,
+                dense_layer,
+                dense_out_features,
+            )
+        };
+        #[cfg(not(feature = "libtorch"))]
+        let (transformer, transformer_config, dense_layer, torch_dense_out_features) = {
+            let _ = (
+                transformer_type,
+                transformer_config_resource,
+                dense_config_resource,
+                dense_weights_resource,
+                device,
+            );
+            let dense_layer: Option<()> = None;
+            let torch_dense_out_features: Option<i64> = None;
+            (
+                SentenceEmbeddingsOption::Onnx(onnx_encoder.unwrap()),
+                None::<()>,
+                dense_layer,
+                torch_dense_out_features,
+            )
+        };
 
         // Setup pooling layer
         let pooling_config = PoolingConfig::from_file(pooling_config_resource.get_local_path()?);
         let mut embeddings_dim = pooling_config.word_embedding_dimension;
         let pooling_layer = Pooling::new(pooling_config);
 
-        // Setup dense layer
-        let dense_layer = if modules.dense_module().is_some() {
-            let dense_config =
-                DenseConfig::from_file(dense_config_resource.unwrap().get_local_path()?);
-            embeddings_dim = dense_config.out_features;
-            Some(Dense::new(
-                dense_config,
-                dense_weights_resource.unwrap().get_local_path()?,
-                device,
-            )?)
-        } else {
-            None
-        };
+        #[cfg(all(feature = "libtorch", feature = "onnx"))]
+        if let Some(out_features) = torch_dense_out_features {
+            embeddings_dim = out_features;
+        }
+        #[cfg(all(feature = "libtorch", not(feature = "onnx")))]
+        if let Some(out_features) = torch_dense_out_features {
+            embeddings_dim = out_features;
+        }
 
         let normalize_embeddings = modules.has_normalization();
 
-        Ok(Self {
-            tokenizer,
-            sentence_bert_config,
-            tokenizer_truncation_strategy: TruncationStrategy::LongestFirst,
-            var_store,
-            transformer,
-            transformer_config,
-            pooling_layer,
-            dense_layer,
-            normalize_embeddings,
-            embeddings_dim,
-        })
+        #[cfg(feature = "libtorch")]
+        {
+            Ok(Self {
+                tokenizer,
+                sentence_bert_config,
+                tokenizer_truncation_strategy: TruncationStrategy::LongestFirst,
+                var_store,
+                transformer,
+                transformer_config,
+                pooling_layer,
+                dense_layer,
+                normalize_embeddings,
+                embeddings_dim,
+            })
+        }
+        #[cfg(not(feature = "libtorch"))]
+        {
+            Ok(Self {
+                tokenizer,
+                sentence_bert_config,
+                tokenizer_truncation_strategy: TruncationStrategy::LongestFirst,
+                transformer,
+                pooling_layer,
+                normalize_embeddings,
+                embeddings_dim,
+            })
+        }
     }
 
     /// Get a reference to the model tokenizer.
@@ -317,8 +542,8 @@ impl SentenceEmbeddingsModel {
         Ok(self.embeddings_dim)
     }
 
-    /// Tokenizes the inputs
-    pub fn tokenize<S>(&self, inputs: &[S]) -> SentenceEmbeddingsTokenizerOutput
+    /// Tokenizes the inputs into padded token ids and attention masks (backend-neutral).
+    pub fn tokenize_arrays<S>(&self, inputs: &[S]) -> (Array2<i64>, Array2<i64>)
     where
         S: AsRef<str> + Send + Sync,
     {
@@ -336,30 +561,39 @@ impl SentenceEmbeddingsModel {
             .unwrap_or(0);
 
         let pad_token_id = self.tokenizer.get_pad_id().unwrap_or(0);
-        let tokens_ids = tokenized_input
-            .into_iter()
-            .map(|input| {
-                let mut token_ids = input.token_ids;
-                token_ids.extend(vec![pad_token_id; max_len - token_ids.len()]);
-                token_ids
-            })
-            .collect::<Vec<_>>();
+        let mut tokens_ids = Array2::<i64>::zeros((tokenized_input.len(), max_len));
+        let mut tokens_masks = Array2::<i64>::zeros((tokenized_input.len(), max_len));
+        for (row, input) in tokenized_input.into_iter().enumerate() {
+            let mut token_ids = input.token_ids;
+            let padding = max_len - token_ids.len();
+            tokens_masks
+                .row_mut(row)
+                .slice_mut(ndarray::s![padding..])
+                .fill(1);
+            token_ids.extend(vec![pad_token_id; padding]);
+            tokens_ids
+                .row_mut(row)
+                .assign(&ndarray::Array1::from(token_ids));
+        }
+        (tokens_ids, tokens_masks)
+    }
 
-        let tokens_masks = tokens_ids
-            .iter()
-            .map(|input| {
-                Tensor::from_slice(
-                    &input
-                        .iter()
-                        .map(|&e| i64::from(e != pad_token_id))
-                        .collect::<Vec<_>>(),
-                )
-            })
-            .collect::<Vec<_>>();
-
+    /// Tokenizes the inputs
+    #[cfg(feature = "libtorch")]
+    pub fn tokenize<S>(&self, inputs: &[S]) -> SentenceEmbeddingsTokenizerOutput
+    where
+        S: AsRef<str> + Send + Sync,
+    {
+        let (tokens_ids, tokens_masks) = self.tokenize_arrays(inputs);
         let tokens_ids = tokens_ids
+            .rows()
             .into_iter()
-            .map(|input| Tensor::from_slice(&(input)))
+            .map(|row| Tensor::from_slice(&row.to_vec()))
+            .collect::<Vec<_>>();
+        let tokens_masks = tokens_masks
+            .rows()
+            .into_iter()
+            .map(|row| Tensor::from_slice(&row.to_vec()))
             .collect::<Vec<_>>();
 
         SentenceEmbeddingsTokenizerOutput {
@@ -369,6 +603,7 @@ impl SentenceEmbeddingsModel {
     }
 
     /// Computes sentence embeddings, outputs `Tensor`.
+    #[cfg(feature = "libtorch")]
     pub fn encode_as_tensor<S>(
         &self,
         inputs: &[S],
@@ -421,43 +656,145 @@ impl SentenceEmbeddingsModel {
     where
         S: AsRef<str> + Send + Sync,
     {
-        let SentenceEmbeddingsModelOutput { embeddings, .. } = self.encode_as_tensor(inputs)?;
-        Ok(Vec::try_from(embeddings)?)
+        let embeddings = self.encode_arrays(inputs)?;
+        Ok(embeddings
+            .rows()
+            .into_iter()
+            .map(|row| row.to_vec())
+            .collect())
     }
 
+    /// Computes sentence embeddings as an (n, dim) array, for both backends.
+    pub fn encode_arrays<S>(&self, inputs: &[S]) -> Result<Array2<f32>, RustBertError>
+    where
+        S: AsRef<str> + Send + Sync,
+    {
+        let (tokens_ids, tokens_masks) = self.tokenize_arrays(inputs);
+        if tokens_ids.nrows() == 0 {
+            return Err(RustBertError::ValueError(
+                "No n-gram found in the document. \
+                Try allowing smaller n-gram sizes or relax stopword/forbidden characters criteria."
+                    .to_string(),
+            ));
+        }
+
+        #[cfg(feature = "onnx")]
+        if let SentenceEmbeddingsOption::Onnx(encoder) = &self.transformer {
+            let tokens_masks_ref = tokens_masks.clone();
+            let output = encoder
+                .forward(
+                    Some(&tokens_ids.into_dyn()),
+                    Some(&tokens_masks.into_dyn()),
+                    None,
+                    None,
+                    None,
+                )?
+                .last_hidden_state
+                .ok_or_else(|| {
+                    RustBertError::ValueError(
+                        "ONNX model did not return last_hidden_state".to_string(),
+                    )
+                })?;
+            // (batch, seq, hidden) -> Array3
+            let token_embeddings = output.into_dimensionality::<ndarray::Ix3>().map_err(|_| {
+                RustBertError::ValueError("Unexpected ONNX output rank".to_string())
+            })?;
+            let mut pooled = self
+                .pooling_layer
+                .forward_array(&token_embeddings, &tokens_masks_ref);
+            if self.normalize_embeddings {
+                pooled = Self::normalize_rows(&pooled);
+            }
+            return Ok(pooled);
+        }
+
+        #[cfg(feature = "libtorch")]
+        {
+            let SentenceEmbeddingsModelOutput { embeddings, .. } = self.encode_as_tensor(inputs)?;
+            let embeddings = crate::common::tensor_conversion::tensor_to_array_f32(&embeddings)?;
+            let embeddings = embeddings
+                .into_dimensionality::<ndarray::Ix2>()
+                .map_err(|_| RustBertError::ValueError("Unexpected embeddings rank".to_string()))?;
+            Ok(embeddings)
+        }
+        #[cfg(not(feature = "libtorch"))]
+        {
+            unreachable!("No inference backend available")
+        }
+    }
+
+    /// L2-normalizes each row of the array.
+    fn normalize_rows(array: &Array2<f32>) -> Array2<f32> {
+        let mut output = array.clone();
+        for mut row in output.rows_mut().into_iter() {
+            let norm = row.iter().map(|&v| v * v).sum::<f32>().sqrt().max(1e-12);
+            for value in row.iter_mut() {
+                *value /= norm;
+            }
+        }
+        output
+    }
+
+    #[cfg(feature = "libtorch")]
     fn nb_layers(&self) -> usize {
         use SentenceEmbeddingsOption::*;
         match (&self.transformer, &self.transformer_config) {
-            (Bert(_), ConfigOption::Bert(conf)) => conf.num_hidden_layers as usize,
+            #[cfg(feature = "onnx")]
+            (SentenceEmbeddingsOption::Onnx(_), _) => return 0,
+            #[cfg(feature = "libtorch")]
+            (Bert(_), Some(ConfigOption::Bert(conf))) => conf.num_hidden_layers as usize,
+            #[cfg(feature = "libtorch")]
             (Bert(_), _) => unreachable!(),
-            (DistilBert(_), ConfigOption::DistilBert(conf)) => conf.n_layers as usize,
+            #[cfg(feature = "libtorch")]
+            (DistilBert(_), Some(ConfigOption::DistilBert(conf))) => conf.n_layers as usize,
+            #[cfg(feature = "libtorch")]
             (DistilBert(_), _) => unreachable!(),
-            (Roberta(_), ConfigOption::Bert(conf)) => conf.num_hidden_layers as usize,
+            #[cfg(feature = "libtorch")]
+            (Roberta(_), Some(ConfigOption::Bert(conf))) => conf.num_hidden_layers as usize,
+            #[cfg(feature = "libtorch")]
             (Roberta(_), _) => unreachable!(),
-            (Albert(_), ConfigOption::Albert(conf)) => conf.num_hidden_layers as usize,
+            #[cfg(feature = "libtorch")]
+            (Albert(_), Some(ConfigOption::Albert(conf))) => conf.num_hidden_layers as usize,
+            #[cfg(feature = "libtorch")]
             (Albert(_), _) => unreachable!(),
-            (T5(_), ConfigOption::T5(conf)) => conf.num_layers as usize,
+            #[cfg(feature = "libtorch")]
+            (T5(_), Some(ConfigOption::T5(conf))) => conf.num_layers as usize,
+            #[cfg(feature = "libtorch")]
             (T5(_), _) => unreachable!(),
         }
     }
 
+    #[cfg(feature = "libtorch")]
     fn nb_heads(&self) -> usize {
         use SentenceEmbeddingsOption::*;
         match (&self.transformer, &self.transformer_config) {
-            (Bert(_), ConfigOption::Bert(conf)) => conf.num_attention_heads as usize,
+            #[cfg(feature = "onnx")]
+            (SentenceEmbeddingsOption::Onnx(_), _) => return 0,
+            #[cfg(feature = "libtorch")]
+            (Bert(_), Some(ConfigOption::Bert(conf))) => conf.num_attention_heads as usize,
+            #[cfg(feature = "libtorch")]
             (Bert(_), _) => unreachable!(),
-            (DistilBert(_), ConfigOption::DistilBert(conf)) => conf.n_heads as usize,
+            #[cfg(feature = "libtorch")]
+            (DistilBert(_), Some(ConfigOption::DistilBert(conf))) => conf.n_heads as usize,
+            #[cfg(feature = "libtorch")]
             (DistilBert(_), _) => unreachable!(),
-            (Roberta(_), ConfigOption::Roberta(conf)) => conf.num_attention_heads as usize,
+            #[cfg(feature = "libtorch")]
+            (Roberta(_), Some(ConfigOption::Roberta(conf))) => conf.num_attention_heads as usize,
+            #[cfg(feature = "libtorch")]
             (Roberta(_), _) => unreachable!(),
-            (Albert(_), ConfigOption::Albert(conf)) => conf.num_attention_heads as usize,
+            #[cfg(feature = "libtorch")]
+            (Albert(_), Some(ConfigOption::Albert(conf))) => conf.num_attention_heads as usize,
+            #[cfg(feature = "libtorch")]
             (Albert(_), _) => unreachable!(),
-            (T5(_), ConfigOption::T5(conf)) => conf.num_heads as usize,
+            #[cfg(feature = "libtorch")]
+            (T5(_), Some(ConfigOption::T5(conf))) => conf.num_heads as usize,
+            #[cfg(feature = "libtorch")]
             (T5(_), _) => unreachable!(),
         }
     }
 
     /// Computes sentence embeddings, also outputs `AttentionOutput`s.
+    #[cfg(feature = "libtorch")]
     pub fn encode_with_attention<S>(
         &self,
         inputs: &[S],
@@ -499,12 +836,14 @@ impl SentenceEmbeddingsModel {
 }
 
 /// Container for the SentenceEmbeddings tokenizer output.
+#[cfg(feature = "libtorch")]
 pub struct SentenceEmbeddingsTokenizerOutput {
     pub tokens_ids: Vec<Tensor>,
     pub tokens_masks: Vec<Tensor>,
 }
 
 /// Container for the SentenceEmbeddings model output.
+#[cfg(feature = "libtorch")]
 pub struct SentenceEmbeddingsModelOutput {
     pub embeddings: Tensor,
     pub all_attentions: Option<Vec<Tensor>>,
