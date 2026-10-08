@@ -124,7 +124,7 @@ fn maximal_margin_relevance_score(
     let word_document_similarities_full =
         cosine_similarity(Some(document_embedding), word_embeddings);
     let word_document_similarities =
-        ndarray::Array1::from(word_document_similarities_full.column(0).to_vec());
+        ndarray::Array1::from(word_document_similarities_full.row(0).to_vec());
     let word_similarities = cosine_similarity(None, word_embeddings);
 
     let mut keyword_indices = vec![argmax_1d(&word_document_similarities)];
@@ -182,7 +182,7 @@ fn max_sum_score(
     let word_document_similarities_full =
         cosine_similarity(Some(document_embedding), word_embeddings);
     let word_document_similarities =
-        ndarray::Array1::from(word_document_similarities_full.column(0).to_vec());
+        ndarray::Array1::from(word_document_similarities_full.row(0).to_vec());
     let word_similarities = cosine_similarity(None, word_embeddings);
 
     let mut order: Vec<usize> = (0..word_document_similarities.len()).collect();

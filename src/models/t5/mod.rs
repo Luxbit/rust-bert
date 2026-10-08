@@ -48,18 +48,31 @@
 //! # }
 //! ```
 
+#[cfg(feature = "libtorch")]
 mod attention;
+pub mod config;
+#[cfg(feature = "libtorch")]
 mod encoder;
+#[cfg(feature = "libtorch")]
 mod layer_norm;
+#[cfg(feature = "libtorch")]
 mod t5_model;
 
+#[cfg(feature = "libtorch")]
 pub use attention::LayerState;
+#[cfg(feature = "libtorch")]
 pub(crate) use attention::{get_relative_position_bucket, T5Attention, T5LayerCrossAttention};
-pub(crate) use encoder::{T5Block, T5BlockOutput, T5LayerFF, T5StackOutput};
-pub(crate) use layer_norm::T5LayerNorm;
-pub(crate) use t5_model::{FeedForwardProj, TaskSpecificParams};
-pub use t5_model::{
-    T5Config, T5ConfigResources, T5ForConditionalGeneration, T5ForSentenceEmbeddings, T5Generator,
-    T5Model, T5ModelOutput, T5ModelResources, T5Prefix, T5SourceLanguages, T5TargetLanguages,
+pub use config::{
+    T5Config, T5ConfigResources, T5ModelResources, T5Prefix, T5SourceLanguages, T5TargetLanguages,
     T5VocabResources,
+};
+#[cfg(feature = "libtorch")]
+pub(crate) use encoder::{T5Block, T5BlockOutput, T5LayerFF, T5StackOutput};
+#[cfg(feature = "libtorch")]
+pub(crate) use layer_norm::T5LayerNorm;
+#[cfg(feature = "libtorch")]
+pub(crate) use t5_model::{FeedForwardProj, TaskSpecificParams};
+#[cfg(feature = "libtorch")]
+pub use t5_model::{
+    T5ForConditionalGeneration, T5ForSentenceEmbeddings, T5Generator, T5Model, T5ModelOutput,
 };

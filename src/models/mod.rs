@@ -34,6 +34,5 @@ pub mod prophetnet;
 pub mod reformer;
 #[cfg(feature = "libtorch")]
 pub mod roberta;
-#[cfg(feature = "libtorch")]
 pub mod t5;
 pub mod xlnet;

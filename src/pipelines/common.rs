@@ -28,6 +28,7 @@ use crate::gpt2::Gpt2Config;
 use crate::longformer::LongformerConfig;
 use crate::mbart::MBartConfig;
 use crate::mobilebert::MobileBertConfig;
+use crate::models::t5::config::T5Config;
 use crate::pipelines::translation::Language;
 use crate::resources::{Resource, ResourceProvider};
 use crate::xlnet::XLNetConfig;
@@ -45,7 +46,6 @@ mod torch_configs {
     pub use crate::pegasus::PegasusConfig;
     pub use crate::prophetnet::ProphetNetConfig;
     pub use crate::reformer::ReformerConfig;
-    pub use crate::t5::T5Config;
 }
 use rust_tokenizers::tokenizer::{
     AlbertTokenizer, BertTokenizer, DeBERTaTokenizer, DeBERTaV2Tokenizer, FNetTokenizer,
@@ -217,8 +217,7 @@ pub enum ConfigOption {
     #[cfg(feature = "libtorch")]
     OpenAiGpt(torch_configs::OpenAiGptConfig),
     /// T5 configuration
-    #[cfg(feature = "libtorch")]
-    T5(torch_configs::T5Config),
+    T5(T5Config),
     /// LongT5 configuration
     #[cfg(feature = "libtorch")]
     LongT5(torch_configs::LongT5Config),
@@ -318,8 +317,7 @@ impl ConfigOption {
             #[cfg(feature = "libtorch")]
             ModelType::Marian => ConfigOption::Marian(torch_configs::MarianConfig::from_file(path)),
             ModelType::MobileBert => ConfigOption::MobileBert(MobileBertConfig::from_file(path)),
-            #[cfg(feature = "libtorch")]
-            ModelType::T5 => ConfigOption::T5(torch_configs::T5Config::from_file(path)),
+            ModelType::T5 => ConfigOption::T5(T5Config::from_file(path)),
             #[cfg(feature = "libtorch")]
             ModelType::LongT5 => ConfigOption::LongT5(torch_configs::LongT5Config::from_file(path)),
             ModelType::Albert => ConfigOption::Albert(AlbertConfig::from_file(path)),
@@ -445,7 +443,6 @@ impl ConfigOption {
                 .id2label
                 .as_ref()
                 .expect("No label dictionary (id2label) provided in configuration file"),
-            #[cfg(feature = "libtorch")]
             Self::T5(_) => panic!("T5 does not use a label mapping"),
             #[cfg(feature = "libtorch")]
             Self::LongT5(_) => panic!("LongT5 does not use a label mapping"),
@@ -473,7 +470,6 @@ impl ConfigOption {
             #[cfg(feature = "libtorch")]
             Self::Marian(config) => Some(config.max_position_embeddings),
             Self::MobileBert(config) => Some(config.max_position_embeddings),
-            #[cfg(feature = "libtorch")]
             Self::T5(_) => None,
             #[cfg(feature = "libtorch")]
             Self::LongT5(_) => None,
@@ -514,7 +510,6 @@ impl ConfigOption {
             #[cfg(feature = "libtorch")]
             Self::Marian(config) => config.vocab_size,
             Self::MobileBert(config) => config.vocab_size,
-            #[cfg(feature = "libtorch")]
             Self::T5(config) => config.vocab_size,
             #[cfg(feature = "libtorch")]
             Self::LongT5(config) => config.vocab_size,
@@ -555,7 +550,6 @@ impl ConfigOption {
             #[cfg(feature = "libtorch")]
             Self::Marian(config) => config.decoder_start_token_id,
             Self::MobileBert(_) => None,
-            #[cfg(feature = "libtorch")]
             Self::T5(config) => config.decoder_start_token_id,
             #[cfg(feature = "libtorch")]
             Self::LongT5(config) => config.decoder_start_token_id,
@@ -596,7 +590,6 @@ impl ConfigOption {
             #[cfg(feature = "libtorch")]
             Self::Marian(config) => config.forced_bos_token_id,
             Self::MobileBert(_) => None,
-            #[cfg(feature = "libtorch")]
             Self::T5(config) => config.forced_bos_token_id,
             #[cfg(feature = "libtorch")]
             Self::LongT5(config) => config.forced_bos_token_id,
@@ -637,7 +630,6 @@ impl ConfigOption {
             #[cfg(feature = "libtorch")]
             Self::Marian(config) => config.forced_eos_token_id,
             Self::MobileBert(_) => None,
-            #[cfg(feature = "libtorch")]
             Self::T5(config) => config.forced_eos_token_id,
             #[cfg(feature = "libtorch")]
             Self::LongT5(config) => config.forced_eos_token_id,
@@ -709,8 +701,7 @@ impl TryFrom<&ConfigOption> for AlbertConfig {
     }
 }
 
-#[cfg(feature = "libtorch")]
-impl TryFrom<&ConfigOption> for torch_configs::T5Config {
+impl TryFrom<&ConfigOption> for T5Config {
     type Error = RustBertError;
 
     fn try_from(config: &ConfigOption) -> Result<Self, Self::Error> {

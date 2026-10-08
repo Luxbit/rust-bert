@@ -148,21 +148,72 @@ impl<'a> KeywordExtractionModel<'a> {
     pub fn new(
         config: KeywordExtractionConfig<'a>,
     ) -> Result<KeywordExtractionModel<'a>, RustBertError> {
-        let tokenizer_config = SentenceEmbeddingsTokenizerConfig::from_file(
-            config
-                .sentence_embeddings_config
-                .tokenizer_config_resource
-                .get_local_path()?,
-        );
-        let sentence_bert_config = SentenceEmbeddingsSentenceBertConfig::from_file(
-            config
-                .sentence_embeddings_config
-                .sentence_bert_config_resource
-                .get_local_path()?,
-        );
+        // Captured before the sentence embeddings configuration is consumed to
+        // build the model.
+        let tokenizer_config_path = config
+            .sentence_embeddings_config
+            .tokenizer_config_resource
+            .get_local_path()?;
+        let sentence_bert_config_path = config
+            .sentence_embeddings_config
+            .sentence_bert_config_resource
+            .get_local_path()?;
         let sentence_embeddings_model =
             SentenceEmbeddingsModel::new(config.sentence_embeddings_config)?;
 
+        let tokenizer_config =
+            SentenceEmbeddingsTokenizerConfig::from_file(tokenizer_config_path.to_str().unwrap());
+        let sentence_bert_config = SentenceEmbeddingsSentenceBertConfig::from_file(
+            sentence_bert_config_path.to_str().unwrap(),
+        );
+        let do_lower_case = tokenizer_config
+            .do_lower_case
+            .unwrap_or(sentence_bert_config.do_lower_case);
+
+        let tokenizer = StopWordsTokenizer::new(
+            config.tokenizer_stopwords,
+            config.tokenizer_pattern,
+            do_lower_case,
+            config.tokenizer_forbidden_ngram_chars,
+        );
+
+        Ok(Self {
+            sentence_embeddings_model,
+            tokenizer,
+            scorer_type: config.scorer_type,
+            ngram_range: config.ngram_range,
+            num_keywords: config.num_keywords,
+            diversity: config.diversity,
+            max_sum_candidates: config.max_sum_candidates,
+        })
+    }
+
+    /// Build a new `KeywordExtractionModel` from a configuration and a
+    /// pre-built sentence embeddings model. This allows providing a custom
+    /// tokenizer / model type (e.g. for ONNX sentence embeddings models where
+    /// the underlying architecture cannot be inferred from the model type).
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - `KeywordExtractionConfig` object containing a sentence embeddings configuration and tokenizer-specific options
+    /// * `sentence_embeddings_model` - `SentenceEmbeddingsModel` to use for computing embeddings
+    pub fn new_with_sentence_embeddings_model(
+        config: KeywordExtractionConfig<'a>,
+        sentence_embeddings_model: SentenceEmbeddingsModel,
+    ) -> Result<KeywordExtractionModel<'a>, RustBertError> {
+        let tokenizer_config_path = config
+            .sentence_embeddings_config
+            .tokenizer_config_resource
+            .get_local_path()?;
+        let tokenizer_config =
+            SentenceEmbeddingsTokenizerConfig::from_file(tokenizer_config_path.to_str().unwrap());
+        let sentence_bert_config_path = config
+            .sentence_embeddings_config
+            .sentence_bert_config_resource
+            .get_local_path()?;
+        let sentence_bert_config = SentenceEmbeddingsSentenceBertConfig::from_file(
+            sentence_bert_config_path.to_str().unwrap(),
+        );
         let do_lower_case = tokenizer_config
             .do_lower_case
             .unwrap_or(sentence_bert_config.do_lower_case);

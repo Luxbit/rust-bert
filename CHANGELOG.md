@@ -5,6 +5,25 @@ on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed an inverted attention mask in the sentence embeddings pipeline
+  (padded positions were attended instead of real tokens), affecting all
+  batched sentence embeddings and keywords extraction results.
+- Fixed a row/column swap in the keywords extraction maximal-margin-relevance
+  and max-sum scorers.
+- (BREAKING) The T5 configuration is now available without the `libtorch`
+  feature (extracted to `rust_bert::t5::config`), enabling ONNX T5 models.
+- Zero-shot classification ONNX models now read the contradiction / entailment
+  logit positions from the model configuration `id2label` mapping instead of
+  assuming a fixed order.
+- Fixed an off-by-one in decoder-only generation position ids (positions were
+  shifted by one, degrading generation quality).
+- Fixed rotated tensor conversions in the T5 / BART / MBart / M2M100 / LongT5 /
+  ProphetNet generation forward passes (encoder outputs and decoder inputs
+  were swapped, breaking encoder-decoder generation on the LibTorch backend).
+
+
 ## [0.24.0] - 2026-10-08
 
 ### Added
