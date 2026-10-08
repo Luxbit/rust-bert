@@ -108,9 +108,9 @@ selected with cargo features, and at least one must be enabled:
 
 | You want... | Cargo.toml |
 |-------------|------------|
-| The default: LibTorch (tch), PyTorch `.pt` weights | `rust-bert = "0.24.0"` |
-| ONNX Runtime only (no LibTorch dependency), ONNX exports | `rust-bert = { version = "0.24.0", default-features = false, features = ["onnx", "remote"] }` |
-| Both backends in the same binary | `rust-bert = { version = "0.24.0", features = ["onnx"] }` |
+| The default: LibTorch (tch), PyTorch `.pt` weights | `rust-bert = "0.25.0"` |
+| ONNX Runtime only (no LibTorch dependency), ONNX exports | `rust-bert = { version = "0.25.0", default-features = false, features = ["onnx", "remote"] }` |
+| Both backends in the same binary | `rust-bert = { version = "0.25.0", features = ["onnx"] }` |
 
 Notes:
 

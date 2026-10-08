@@ -88,7 +88,7 @@
 //! At least one backend must be enabled. Every pipeline is available with the ONNX backend only, allowing to build and run this crate without any LibTorch dependency:
 //! ```toml
 //! [dependencies]
-//! rust-bert = { version = "0.24.0", default-features = false, features = ["onnx", "remote"] }
+//! rust-bert = { version = "0.25.0", default-features = false, features = ["onnx", "remote"] }
 //! ```
 //! With this configuration the models must be provided as ONNX exports (see the [ONNX Support](#onnx-support-optional) section below); PyTorch weight files (`.pt`) require the `libtorch` feature.
 //! The `cuda` feature (implied by `onnx`) enables the CUDA execution provider for onnxruntime.
