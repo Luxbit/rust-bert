@@ -20,10 +20,17 @@ use crate::pipelines::common::{ModelType, TokenizerOption};
 use crate::pipelines::generation_utils::private_generation_utils::{
     PreparedInput, PrivateLanguageGenerator,
 };
-use crate::pipelines::generation_utils::{Cache, GenerateConfig, LMModelOutput, LanguageGenerator};
+use crate::pipelines::generation_utils::{
+    last_column, option_array2_to_tensor, option_array_to_tensor_f32,
+};
+use crate::pipelines::generation_utils::{
+    Cache, GenerateConfig, GeneratedLogits, LanguageGenerator,
+};
 use crate::{Config, RustBertError};
+use ndarray::ArrayD;
 use serde::{Deserialize, Serialize};
 use std::borrow::{Borrow, BorrowMut};
+use std::cmp::{max, min};
 use tch::nn::{embedding, Linear};
 use tch::{nn, Device, Tensor};
 
@@ -480,7 +487,7 @@ impl GptJLMHeadModel {
         _encoder_outputs: Option<&Tensor>,
         _decoder_input_ids: Option<&Tensor>,
         train: bool,
-    ) -> Result<LMModelOutput, RustBertError> {
+    ) -> Result<GeneratedLogits, RustBertError> {
         let base_model_output = match layer_past {
             Cache::GPTJCache(layer_past) => self.transformer.forward_t(
                 input_ids,
@@ -509,8 +516,8 @@ impl GptJLMHeadModel {
 
         let lm_logits = base_model_output.output.apply(&self.lm_head);
 
-        Ok(LMModelOutput {
-            lm_logits,
+        Ok(GeneratedLogits {
+            lm_logits: crate::common::tensor_conversion::tensor_to_array_f32(&lm_logits)?,
             cache: Cache::GPTJCache(base_model_output.cache),
         })
     }
@@ -599,10 +606,10 @@ impl GptJGenerator {
         tokenizer: TokenizerOption,
     ) -> Result<GptJGenerator, RustBertError> {
         let config_path = generate_config.config_resource.get_local_path()?;
-        let device = generate_config.device;
+        let device: tch::Device = generate_config.device.into();
 
         generate_config.validate();
-        let mut var_store = nn::VarStore::new(device);
+        let mut var_store = nn::VarStore::new(device.into());
 
         let config = GptJConfig::from_file(config_path);
         let model = GptJLMHeadModel::new(var_store.root(), &config);
@@ -613,7 +620,7 @@ impl GptJGenerator {
             &generate_config.model_resource,
             &mut var_store,
             generate_config.kind,
-            device,
+            device.into(),
         )?;
         if device != Device::Cpu {
             var_store.set_device(device);
@@ -650,9 +657,11 @@ impl PrivateLanguageGenerator for GptJGenerator {
     fn _get_tokenizer_mut(&mut self) -> &mut TokenizerOption {
         &mut self.tokenizer
     }
-    fn get_device(&self) -> Device {
-        self.var_store.device()
+    fn get_device(&self) -> crate::Device {
+        crate::Device::from(self.var_store.device())
     }
+    #[cfg(feature = "libtorch")]
+    #[cfg(feature = "libtorch")]
     fn get_var_store_mut(&mut self) -> Result<&mut nn::VarStore, RustBertError> {
         Ok(&mut self.var_store)
     }
@@ -683,33 +692,61 @@ impl PrivateLanguageGenerator for GptJGenerator {
 
     fn forward_t(
         &self,
-        input_ids: Option<&Tensor>,
+        input_ids: Option<&ndarray::Array2<i64>>,
         layer_past: Cache,
-        attention_mask: Option<&Tensor>,
-        token_type_ids: Option<&Tensor>,
-        position_ids: Option<&Tensor>,
-        input_embeds: Option<&Tensor>,
-        _encoder_outputs: Option<&Tensor>,
-        _decoder_input_ids: Option<&Tensor>,
+        attention_mask: Option<&ndarray::Array2<i64>>,
+        token_type_ids: Option<&ndarray::Array2<i64>>,
+        position_ids: Option<&ndarray::Array2<i64>>,
+        input_embeds: Option<&ndarray::ArrayD<f32>>,
+        _encoder_outputs: Option<&ndarray::ArrayD<f32>>,
+        _decoder_input_ids: Option<&ndarray::Array2<i64>>,
         train: bool,
-    ) -> Result<LMModelOutput, RustBertError> {
+    ) -> Result<GeneratedLogits, RustBertError> {
+        #[cfg(feature = "libtorch")]
+        let (
+            input_ids,
+            attention_mask,
+            token_type_ids,
+            position_ids,
+            input_embeds,
+            encoder_outputs,
+            decoder_input_ids,
+        ) = (
+            option_array2_to_tensor(input_ids),
+            option_array2_to_tensor(attention_mask),
+            option_array2_to_tensor(token_type_ids),
+            option_array2_to_tensor(position_ids),
+            option_array2_to_tensor(_decoder_input_ids),
+            option_array_to_tensor_f32(input_embeds),
+            option_array_to_tensor_f32(_encoder_outputs),
+        );
+        #[cfg(not(feature = "libtorch"))]
+        let (_, _, _, _, _, _, _) = (
+            input_ids,
+            attention_mask,
+            token_type_ids,
+            position_ids,
+            input_embeds,
+            encoder_outputs,
+            decoder_input_ids,
+        );
         let base_model_output = match layer_past {
             Cache::GPTJCache(layer_past) => self.model.transformer.forward_t(
-                input_ids,
+                input_ids.as_ref(),
                 layer_past,
-                attention_mask,
-                token_type_ids,
-                position_ids,
-                input_embeds,
+                attention_mask.as_ref(),
+                token_type_ids.as_ref(),
+                position_ids.as_ref(),
+                input_embeds.as_ref(),
                 train,
             ),
             Cache::None => self.model.transformer.forward_t(
-                input_ids,
+                input_ids.as_ref(),
                 None,
-                attention_mask,
-                token_type_ids,
-                position_ids,
-                input_embeds,
+                attention_mask.as_ref(),
+                token_type_ids.as_ref(),
+                position_ids.as_ref(),
+                input_embeds.as_ref(),
                 train,
             ),
             _ => {
@@ -721,24 +758,32 @@ impl PrivateLanguageGenerator for GptJGenerator {
 
         let lm_logits = base_model_output.output.apply(&self.model.lm_head);
 
-        Ok(LMModelOutput {
-            lm_logits,
+        Ok(GeneratedLogits {
+            lm_logits: crate::common::tensor_conversion::tensor_to_array_f32(&lm_logits)?,
             cache: Cache::GPTJCache(base_model_output.cache),
         })
     }
 
     fn prepare_inputs_for_generation<'a>(
         &self,
-        input_ids: Tensor,
-        _encoder_outputs: Option<&'a Tensor>,
+        input_ids: ndarray::Array2<i64>,
+        _encoder_outputs: Option<&'a ArrayD<f32>>,
         past: Cache,
-        attention_mask: Tensor,
+        attention_mask: ndarray::Array2<i64>,
     ) -> PreparedInput<'a> {
+        let mut position_ids = ndarray::Array2::<i64>::zeros(attention_mask.raw_dim());
+        for row in 0..attention_mask.nrows() {
+            let mut cumulative = 0i64;
+            for col in 0..attention_mask.ncols() {
+                cumulative += attention_mask[[row, col]];
+                position_ids[[row, col]] = max(cumulative - 1, 1);
+            }
+        }
         match past {
             Cache::GPTJCache(past) => {
                 if past.is_some() {
                     PreparedInput {
-                        prepared_input: Some(input_ids.select(1, -1).unsqueeze(-1)),
+                        prepared_input: Some(last_column(&input_ids)),
                         prepared_attention_mask: Some(attention_mask),
                         prepared_encoder_output: None,
                         prepared_decoder_input: None,
@@ -771,15 +816,22 @@ impl PrivateLanguageGenerator for GptJGenerator {
     fn reorder_cache(
         &self,
         past: &mut Cache,
-        _encoder_outputs: Option<Tensor>,
-        beam_indices: &Tensor,
-    ) -> Option<Tensor> {
+        _encoder_outputs: Option<ArrayD<f32>>,
+        beam_indices: &[i64],
+    ) -> Option<ArrayD<f32>> {
+        #[cfg(feature = "libtorch")]
+        let beam_indices = Tensor::from_slice(beam_indices);
+        #[cfg(feature = "libtorch")]
+        let encoder_outputs_tensor = _encoder_outputs.map(|output| {
+            crate::common::tensor_conversion::array_to_tensor_f32(&output)
+                .expect("Error converting encoder output")
+        });
         match past {
             Cache::GPTJCache(cached_decoder_state) => match cached_decoder_state {
                 Some(old_cache) => {
                     for layer_state in old_cache.iter_mut() {
                         if layer_state.is_some() {
-                            layer_state.as_mut().unwrap().reorder_cache(beam_indices)
+                            layer_state.as_mut().unwrap().reorder_cache(&beam_indices)
                         };
                     }
                     None

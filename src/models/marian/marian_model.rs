@@ -16,9 +16,15 @@ use crate::pipelines::common::{ModelType, TokenizerOption};
 use crate::pipelines::generation_utils::private_generation_utils::{
     force_token_id_generation, PreparedInput, PrivateLanguageGenerator,
 };
-use crate::pipelines::generation_utils::{Cache, GenerateConfig, LMModelOutput, LanguageGenerator};
+use crate::pipelines::generation_utils::{
+    last_column, option_array2_to_tensor, option_array_to_tensor_f32,
+};
+use crate::pipelines::generation_utils::{
+    Cache, GenerateConfig, GeneratedLogits, LanguageGenerator,
+};
 use crate::pipelines::translation::Language;
 use crate::{Config, RustBertError};
+use ndarray::ArrayD;
 use std::borrow::Borrow;
 use tch::nn::Init;
 use tch::{nn, Device, Kind, Tensor};
@@ -757,7 +763,7 @@ impl MarianGenerator {
         let device = generate_config.device;
 
         generate_config.validate();
-        let mut var_store = nn::VarStore::new(device);
+        let mut var_store = nn::VarStore::new(device.into());
 
         let config = BartConfig::from_file(config_path);
         let model = MarianForConditionalGeneration::new(var_store.root(), &config);
@@ -765,7 +771,7 @@ impl MarianGenerator {
             &generate_config.model_resource,
             &mut var_store,
             generate_config.kind,
-            device,
+            device.into(),
         )?;
 
         let bos_token_id = Some(config.bos_token_id.unwrap_or(0));
@@ -806,9 +812,11 @@ impl PrivateLanguageGenerator for MarianGenerator {
     fn _get_tokenizer_mut(&mut self) -> &mut TokenizerOption {
         &mut self.tokenizer
     }
-    fn get_device(&self) -> Device {
-        self.var_store.device()
+    fn get_device(&self) -> crate::Device {
+        crate::Device::from(self.var_store.device())
     }
+    #[cfg(feature = "libtorch")]
+    #[cfg(feature = "libtorch")]
     fn get_var_store_mut(&mut self) -> Result<&mut nn::VarStore, RustBertError> {
         Ok(&mut self.var_store)
     }
@@ -839,31 +847,59 @@ impl PrivateLanguageGenerator for MarianGenerator {
 
     fn forward_t(
         &self,
-        input_ids: Option<&Tensor>,
+        input_ids: Option<&ndarray::Array2<i64>>,
         cache: Cache,
-        attention_mask: Option<&Tensor>,
-        _token_type_ids: Option<&Tensor>,
-        _position_ids: Option<&Tensor>,
-        _input_embeds: Option<&Tensor>,
-        encoder_outputs: Option<&Tensor>,
-        decoder_input_ids: Option<&Tensor>,
+        attention_mask: Option<&ndarray::Array2<i64>>,
+        _token_type_ids: Option<&ndarray::Array2<i64>>,
+        _position_ids: Option<&ndarray::Array2<i64>>,
+        _input_embeds: Option<&ndarray::ArrayD<f32>>,
+        encoder_outputs: Option<&ndarray::ArrayD<f32>>,
+        decoder_input_ids: Option<&ndarray::Array2<i64>>,
         train: bool,
-    ) -> Result<LMModelOutput, RustBertError> {
+    ) -> Result<GeneratedLogits, RustBertError> {
+        #[cfg(feature = "libtorch")]
+        let (
+            input_ids,
+            attention_mask,
+            token_type_ids,
+            position_ids,
+            input_embeds,
+            encoder_outputs,
+            decoder_input_ids,
+        ) = (
+            option_array2_to_tensor(input_ids),
+            option_array2_to_tensor(attention_mask),
+            option_array2_to_tensor(_token_type_ids),
+            option_array2_to_tensor(_position_ids),
+            option_array2_to_tensor(decoder_input_ids),
+            option_array_to_tensor_f32(_input_embeds),
+            option_array_to_tensor_f32(encoder_outputs),
+        );
+        #[cfg(not(feature = "libtorch"))]
+        let (_, _, _, _, _, _, _) = (
+            input_ids,
+            attention_mask,
+            token_type_ids,
+            position_ids,
+            input_embeds,
+            encoder_outputs,
+            decoder_input_ids,
+        );
         let base_model_output = match cache {
             Cache::BARTCache(cached_layer_states) => self.model.forward_t(
-                input_ids,
-                attention_mask,
-                encoder_outputs,
-                decoder_input_ids,
+                input_ids.as_ref(),
+                attention_mask.as_ref(),
+                encoder_outputs.as_ref(),
+                decoder_input_ids.as_ref(),
                 None,
                 cached_layer_states,
                 train,
             ),
             Cache::None => self.model.forward_t(
-                input_ids,
-                attention_mask,
-                encoder_outputs,
-                decoder_input_ids,
+                input_ids.as_ref(),
+                attention_mask.as_ref(),
+                encoder_outputs.as_ref(),
+                decoder_input_ids.as_ref(),
                 None,
                 None,
                 train,
@@ -875,54 +911,74 @@ impl PrivateLanguageGenerator for MarianGenerator {
             }
         };
 
-        Ok(LMModelOutput {
-            lm_logits: base_model_output.decoder_output,
+        Ok(GeneratedLogits {
+            lm_logits: crate::common::tensor_conversion::tensor_to_array_f32(
+                &base_model_output.decoder_output,
+            )?,
             cache: Cache::BARTCache(base_model_output.cache),
         })
     }
 
     fn prepare_scores_for_generation(
         &self,
-        scores: &mut Tensor,
+        scores: &mut ndarray::Array2<f32>,
         current_length: i64,
         max_length: Option<i64>,
         _forced_bos_token_id: Option<i64>,
     ) {
-        let _ = scores.index_fill_(
-            1,
-            &Tensor::from_slice(&[self.get_pad_id().unwrap()])
-                .to_kind(Kind::Int64)
-                .to_device(scores.device()),
-            f64::NEG_INFINITY,
-        );
+        let pad_id = self.get_pad_id().unwrap();
+        for mut row in scores.rows_mut().into_iter() {
+            row[pad_id as usize] = f32::NEG_INFINITY;
+        }
         if let Some(max_length) = max_length {
             if current_length == max_length - 1 {
-                force_token_id_generation(
-                    scores,
-                    self.get_eos_ids().as_ref().unwrap(),
-                    self.get_vocab_size(),
-                );
+                if let Some(eos_ids) = self.get_eos_ids() {
+                    for eos_id in eos_ids {
+                        for mut row in scores.rows_mut().into_iter() {
+                            row[*eos_id as usize] = f32::NEG_INFINITY;
+                        }
+                    }
+                }
             }
         }
     }
 
-    fn encode(&self, input_ids: &Tensor, attention_mask: Option<&Tensor>) -> Option<Tensor> {
-        Some(self.model.encode(input_ids, attention_mask))
+    fn encode(
+        &self,
+        input_ids: &ndarray::Array2<i64>,
+        attention_mask: Option<&ndarray::Array2<i64>>,
+    ) -> Option<ArrayD<f32>> {
+        #[cfg(feature = "libtorch")]
+        {
+            let input_ids_tensor = option_array2_to_tensor(Some(input_ids))?;
+            let attention_mask_tensor = option_array2_to_tensor(attention_mask);
+            let encoded = self
+                .model
+                .encode(&input_ids_tensor, attention_mask_tensor.as_ref());
+            Some(
+                crate::common::tensor_conversion::tensor_to_array_f32(&encoded)
+                    .expect("Error converting encoder output"),
+            )
+        }
+        #[cfg(not(feature = "libtorch"))]
+        {
+            None
+        }
     }
 
     fn prepare_inputs_for_generation<'a>(
         &self,
-        input_ids: Tensor,
-        encoder_outputs: Option<&'a Tensor>,
+        input_ids: ndarray::Array2<i64>,
+        encoder_outputs: Option<&'a ArrayD<f32>>,
         past: Cache,
-        attention_mask: Tensor,
+        attention_mask: ndarray::Array2<i64>,
     ) -> PreparedInput<'a> {
         match past {
             Cache::BARTCache(past) => PreparedInput {
                 prepared_input: None,
                 prepared_attention_mask: Some(attention_mask),
                 prepared_encoder_output: encoder_outputs,
-                prepared_decoder_input: Some(input_ids.narrow(1, -1, 1)),
+                prepared_decoder_input: Some(last_column(&input_ids)),
                 prepared_position_ids: None,
                 prepared_past: Cache::BARTCache(past),
             },
@@ -941,10 +997,22 @@ impl PrivateLanguageGenerator for MarianGenerator {
     fn reorder_cache(
         &self,
         past: &mut Cache,
-        encoder_outputs: Option<Tensor>,
-        beam_indices: &Tensor,
-    ) -> Option<Tensor> {
-        let encoder_outputs = encoder_outputs.map(|value| value.index_select(0, beam_indices));
+        encoder_outputs: Option<ArrayD<f32>>,
+        beam_indices: &[i64],
+    ) -> Option<ArrayD<f32>> {
+        #[cfg(feature = "libtorch")]
+        let beam_indices = Tensor::from_slice(beam_indices);
+        #[cfg(feature = "libtorch")]
+        let encoder_outputs_tensor = encoder_outputs.map(|output| {
+            crate::common::tensor_conversion::array_to_tensor_f32(&output)
+                .expect("Error converting encoder output")
+        });
+        let encoder_outputs = encoder_outputs_tensor.map(|value| {
+            crate::common::tensor_conversion::tensor_to_array_f32(
+                &value.index_select(0, &beam_indices),
+            )
+            .expect("Error converting encoder output")
+        });
 
         match past {
             Cache::BARTCache(old_cache_option) => {
@@ -954,13 +1022,13 @@ impl PrivateLanguageGenerator for MarianGenerator {
                             self_layer_state
                                 .as_mut()
                                 .unwrap()
-                                .reorder_cache(beam_indices)
+                                .reorder_cache(&beam_indices)
                         };
                         if encoder_layer_state.is_some() {
                             encoder_layer_state
                                 .as_mut()
                                 .unwrap()
-                                .reorder_cache(beam_indices)
+                                .reorder_cache(&beam_indices)
                         };
                     }
                 }

@@ -54,6 +54,7 @@ pub(crate) fn tensor_to_array_f32(tensor: &Tensor) -> Result<ArrayD<f32>, RustBe
 }
 
 /// Extract the flattened data of a `tch` tensor as a vector of `i64` values.
+#[allow(dead_code)]
 pub(crate) fn tensor_to_vec_i64(tensor: &Tensor) -> Result<Vec<i64>, RustBertError> {
     let flat = tensor
         .to_device(Device::Cpu)

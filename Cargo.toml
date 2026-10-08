@@ -94,6 +94,7 @@ uuid = { version = "1", features = ["v4"] }
 thiserror = "2"
 half = "2"
 regex = "1.11"
+rand = "0.9"
 
 cached-path = { version = "0.8", default-features = false, optional = true }
 dirs = { version = "6", optional = true }

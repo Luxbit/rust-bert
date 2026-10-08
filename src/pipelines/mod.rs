@@ -527,9 +527,6 @@
 pub mod common;
 #[cfg(feature = "libtorch")]
 pub mod conversation;
-// TODO(libtorch-optional): the generation stack below is still tch-based and is
-// re-enabled for ONNX-only builds in the dedicated generation refactor.
-#[cfg(feature = "libtorch")]
 pub mod generation_utils;
 #[cfg(feature = "libtorch")]
 pub mod keywords_extraction;
@@ -541,12 +538,9 @@ pub mod question_answering;
 pub mod sentence_embeddings;
 pub mod sentiment;
 pub mod sequence_classification;
-#[cfg(feature = "libtorch")]
 pub mod summarization;
-#[cfg(feature = "libtorch")]
 pub mod text_generation;
 pub mod token_classification;
-#[cfg(feature = "libtorch")]
 pub mod translation;
 pub mod zero_shot_classification;
 

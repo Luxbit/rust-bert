@@ -57,16 +57,24 @@
 //! # }
 //! ```
 
+#[cfg(feature = "libtorch")]
 mod attention;
+pub mod config;
+#[cfg(feature = "libtorch")]
 mod decoder;
+#[cfg(feature = "libtorch")]
 mod embeddings;
+#[cfg(feature = "libtorch")]
 mod encoder;
+#[cfg(feature = "libtorch")]
 mod m2m_100_model;
 
+pub use config::{M2M100SourceLanguages, M2M100TargetLanguages};
+#[cfg(feature = "libtorch")]
 pub use m2m_100_model::{
     M2M100Config, M2M100ConfigResources, M2M100ForConditionalGeneration, M2M100Generator,
-    M2M100MergesResources, M2M100Model, M2M100ModelResources, M2M100SourceLanguages,
-    M2M100TargetLanguages, M2M100VocabResources,
+    M2M100MergesResources, M2M100Model, M2M100ModelResources, M2M100VocabResources,
 };
 
+#[cfg(feature = "libtorch")]
 pub use attention::LayerState;

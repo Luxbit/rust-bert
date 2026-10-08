@@ -49,18 +49,29 @@
 //! # }
 //! ```
 
+#[cfg(feature = "libtorch")]
 mod attention;
+pub mod config;
+#[cfg(feature = "libtorch")]
 mod decoder;
+#[cfg(feature = "libtorch")]
 mod embeddings;
+#[cfg(feature = "libtorch")]
 mod encoder;
+#[cfg(feature = "libtorch")]
 mod mbart_model;
 
+pub use config::{MBartConfig, MBartConfigResources, MBartModelResources, MBartVocabResources};
+#[cfg(feature = "libtorch")]
+#[cfg(feature = "libtorch")]
 pub use mbart_model::{
-    MBartConfig, MBartConfigResources, MBartForConditionalGeneration,
-    MBartForSequenceClassification, MBartGenerator, MBartModel, MBartModelOutput,
-    MBartModelResources, MBartSourceLanguages, MBartTargetLanguages, MBartVocabResources,
+    MBartForConditionalGeneration, MBartForSequenceClassification, MBartGenerator, MBartModel,
+    MBartModelOutput, MBartSourceLanguages, MBartTargetLanguages,
 };
 
+#[cfg(feature = "libtorch")]
 pub use attention::LayerState;
+#[cfg(feature = "libtorch")]
 pub(crate) use decoder::MBartDecoderLayer;
+#[cfg(feature = "libtorch")]
 pub(crate) use encoder::MBartEncoderLayer;

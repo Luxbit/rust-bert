@@ -1,7 +1,20 @@
 use crate::pipelines::common::ModelType;
+
+pub(super) struct TranslationResources<R>
+where
+    R: ResourceProvider + Send + 'static,
+{
+    pub(super) model_type: ModelType,
+    pub(super) model_resource: R,
+    pub(super) config_resource: R,
+    pub(super) vocab_resource: R,
+    pub(super) merges_resource: R,
+    pub(super) source_languages: Vec<Language>,
+    pub(super) target_languages: Vec<Language>,
+}
 use crate::pipelines::translation::Language;
+use crate::Device;
 use std::fmt::Debug;
-use tch::Device;
 
 #[cfg(feature = "remote")]
 use crate::{
@@ -113,7 +126,7 @@ impl TranslationModelBuilder {
     ///
     /// ```no_run
     /// use rust_bert::pipelines::translation::TranslationModelBuilder;
-    /// use tch::Device;
+    /// use crate::Device;
     /// fn main() -> anyhow::Result<()> {
     ///  let model = TranslationModelBuilder::new()
     ///      .with_device(Device::Cuda(0))
@@ -325,15 +338,16 @@ impl TranslationModelBuilder {
     ///  Ok(())
     /// }
     /// ```
-    #[cfg(feature = "remote")]
+    #[cfg(all(feature = "remote", feature = "libtorch"))]
     pub fn create_model(&self) -> Result<TranslationModel, RustBertError> {
         let device = self.device.unwrap_or_else(Device::cuda_if_available);
 
-        let translation_resources = match (
+        let translation_resources: TranslationResources<_> = match (
             &self.model_type,
             &self.source_languages,
             &self.target_languages,
         ) {
+            #[cfg(feature = "libtorch")]
             (Some(ModelType::M2M100), source_languages, target_languages) => {
                 match self.model_size {
                     Some(ModelSize::XLarge) => model_fetchers::get_m2m100_xlarge_resources(
@@ -346,18 +360,21 @@ impl TranslationModelBuilder {
                     )?,
                 }
             }
+            #[cfg(feature = "libtorch")]
             (Some(ModelType::MBart), source_languages, target_languages) => {
                 model_fetchers::get_mbart50_resources(
                     source_languages.as_ref(),
                     target_languages.as_ref(),
                 )?
             }
+            #[cfg(feature = "libtorch")]
             (Some(ModelType::Marian), source_languages, target_languages) => {
                 model_fetchers::get_marian_model(
                     source_languages.as_ref(),
                     target_languages.as_ref(),
                 )?
             }
+            #[cfg(feature = "libtorch")]
             (None, source_languages, target_languages) => model_fetchers::get_default_model(
                 &self.model_size,
                 source_languages.as_ref(),
@@ -390,7 +407,7 @@ impl TranslationModelBuilder {
     }
 }
 
-#[cfg(feature = "remote")]
+#[cfg(all(feature = "remote", feature = "libtorch"))]
 mod model_fetchers {
     use super::*;
     use crate::{
@@ -408,19 +425,6 @@ mod model_fetchers {
         },
         resources::RemoteResource,
     };
-
-    pub(super) struct TranslationResources<R>
-    where
-        R: ResourceProvider + Send + 'static,
-    {
-        pub(super) model_type: ModelType,
-        pub(super) model_resource: R,
-        pub(super) config_resource: R,
-        pub(super) vocab_resource: R,
-        pub(super) merges_resource: R,
-        pub(super) source_languages: Vec<Language>,
-        pub(super) target_languages: Vec<Language>,
-    }
 
     macro_rules! get_marian_resources {
         ($name:ident) => {

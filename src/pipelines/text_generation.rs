@@ -31,27 +31,27 @@
 //!
 //! Customized text generation models models can be loaded by overwriting the resources in the configuration.
 //! The dependencies will be downloaded to the user's home directory, e.g. under ~/.cache/.rustbert/gpt2
-use tch::{Device, Kind};
+use crate::Device;
+#[cfg(feature = "libtorch")]
+use tch::Kind;
 
+#[cfg(feature = "libtorch")]
+mod torch_models {
+    pub use crate::gpt2::GPT2Generator;
+    pub use crate::gpt_j::GptJGenerator;
+    pub use crate::gpt_neo::GptNeoGenerator;
+    pub use crate::openai_gpt::OpenAIGenerator;
+    pub use crate::reformer::ReformerGenerator;
+    pub use crate::t5::T5Generator;
+    pub use crate::xlnet::XLNetGenerator;
+}
 use crate::common::error::RustBertError;
-use crate::gpt2::GPT2Generator;
-use crate::gpt_j::GptJGenerator;
-use crate::gpt_neo::GptNeoGenerator;
-use crate::openai_gpt::OpenAIGenerator;
 use crate::pipelines::common::{ModelResource, ModelType, TokenizerOption};
 use crate::pipelines::generation_utils::{GenerateConfig, GenerateOptions, LanguageGenerator};
-use crate::reformer::ReformerGenerator;
 use crate::resources::ResourceProvider;
-use crate::t5::T5Generator;
-use crate::xlnet::XLNetGenerator;
 
 #[cfg(feature = "onnx")]
 use crate::pipelines::onnx::ONNXCausalGenerator;
-#[cfg(feature = "remote")]
-use crate::{
-    gpt2::{Gpt2ConfigResources, Gpt2MergesResources, Gpt2ModelResources, Gpt2VocabResources},
-    resources::RemoteResource,
-};
 
 /// # Configuration for text generation
 /// Contains information regarding the model to load, mirrors the GenerateConfig, with a
@@ -97,7 +97,8 @@ pub struct TextGenerationConfig {
     pub diversity_penalty: Option<f64>,
     /// Device to place the model on (default: CUDA/GPU when available)
     pub device: Device,
-    /// Model weights precision. If not provided, will default to full precision on CPU, or the loaded weights precision otherwise
+    /// Model weights precision (LibTorch backend only). If not provided, will default to full precision on CPU, or the loaded weights precision otherwise
+    #[cfg(feature = "libtorch")]
     pub kind: Option<Kind>,
 }
 
@@ -143,23 +144,37 @@ impl TextGenerationConfig {
             num_beam_groups: None,
             diversity_penalty: None,
             device: Device::cuda_if_available(),
+            #[cfg(feature = "libtorch")]
             kind: None,
         }
     }
 }
 
 #[cfg(feature = "remote")]
+use crate::resources::RemoteResource;
+#[cfg(feature = "remote")]
 impl Default for TextGenerationConfig {
     fn default() -> TextGenerationConfig {
+        // Default resources point at the GPT-2 medium checkpoints; the model backend is
+        // selected by the `model_resource` variant (Torch or ONNX), so the resource
+        // descriptors themselves are backend-independent.
         TextGenerationConfig::new(
             ModelType::GPT2,
-            ModelResource::Torch(Box::new(RemoteResource::from_pretrained(
-                Gpt2ModelResources::GPT2_MEDIUM,
+            ModelResource::Torch(Box::new(RemoteResource::new(
+                "https://huggingface.co/gpt2-medium/resolve/main/rust_model.ot",
+                "gpt2-medium/model",
             ))),
-            RemoteResource::from_pretrained(Gpt2ConfigResources::GPT2_MEDIUM),
-            RemoteResource::from_pretrained(Gpt2VocabResources::GPT2_MEDIUM),
-            Some(RemoteResource::from_pretrained(
-                Gpt2MergesResources::GPT2_MEDIUM,
+            RemoteResource::new(
+                "https://huggingface.co/gpt2-medium/resolve/main/config.json",
+                "gpt2-medium/config",
+            ),
+            RemoteResource::new(
+                "https://huggingface.co/gpt2-medium/resolve/main/vocab.json",
+                "gpt2-medium/vocab",
+            ),
+            Some(RemoteResource::new(
+                "https://huggingface.co/gpt2-medium/resolve/main/merges.txt",
+                "gpt2-medium/merges",
             )),
         )
     }
@@ -188,6 +203,7 @@ impl From<TextGenerationConfig> for GenerateConfig {
             num_beam_groups: config.num_beam_groups,
             diversity_penalty: config.diversity_penalty,
             device: config.device,
+            #[cfg(feature = "libtorch")]
             kind: config.kind,
         }
     }
@@ -196,19 +212,26 @@ impl From<TextGenerationConfig> for GenerateConfig {
 /// # Abstraction that holds one particular text generation model, for any of the supported models
 pub enum TextGenerationOption {
     /// Text Generator based on GPT2 model
-    GPT2(GPT2Generator),
+    #[cfg(feature = "libtorch")]
+    GPT2(torch_models::GPT2Generator),
     /// Text Generator based on GPT model
-    GPT(OpenAIGenerator),
+    #[cfg(feature = "libtorch")]
+    GPT(torch_models::OpenAIGenerator),
     /// Text Generator based on GPT-Neo model
-    GPTNeo(GptNeoGenerator),
+    #[cfg(feature = "libtorch")]
+    GPTNeo(torch_models::GptNeoGenerator),
     /// Text Generator based on GPT-J model
-    GPTJ(GptJGenerator),
+    #[cfg(feature = "libtorch")]
+    GPTJ(torch_models::GptJGenerator),
     /// Text Generator based on XLNet model
-    XLNet(XLNetGenerator),
+    #[cfg(feature = "libtorch")]
+    XLNet(torch_models::XLNetGenerator),
     /// Text Generator based on Reformer model
-    Reformer(ReformerGenerator),
+    #[cfg(feature = "libtorch")]
+    Reformer(torch_models::ReformerGenerator),
     /// Text Generator based on T5 model
-    T5(T5Generator),
+    #[cfg(feature = "libtorch")]
+    T5(torch_models::T5Generator),
     /// ONNX model for text generation
     #[cfg(feature = "onnx")]
     ONNX(ONNXCausalGenerator),
@@ -221,25 +244,38 @@ impl TextGenerationOption {
             (_, &ModelResource::ONNX(_)) => Ok(TextGenerationOption::ONNX(
                 ONNXCausalGenerator::new(config.into(), None)?,
             )),
-            (ModelType::GPT2, _) => Ok(TextGenerationOption::GPT2(GPT2Generator::new(
+            #[cfg(feature = "libtorch")]
+            (ModelType::GPT2, _) => Ok(TextGenerationOption::GPT2(
+                torch_models::GPT2Generator::new(config.into())?,
+            )),
+            #[cfg(feature = "libtorch")]
+            (ModelType::OpenAiGpt, _) => Ok(TextGenerationOption::GPT(
+                torch_models::OpenAIGenerator::new(config.into())?,
+            )),
+            #[cfg(feature = "libtorch")]
+            (ModelType::XLNet, _) => Ok(TextGenerationOption::XLNet(
+                torch_models::XLNetGenerator::new(config.into())?,
+            )),
+            #[cfg(feature = "libtorch")]
+            #[cfg(feature = "libtorch")]
+            (ModelType::Reformer, _) => Ok(TextGenerationOption::Reformer(
+                torch_models::ReformerGenerator::new(config.into())?,
+            )),
+            #[cfg(feature = "libtorch")]
+            #[cfg(feature = "libtorch")]
+            (ModelType::GPTNeo, _) => Ok(TextGenerationOption::GPTNeo(
+                torch_models::GptNeoGenerator::new(config.into())?,
+            )),
+            #[cfg(feature = "libtorch")]
+            #[cfg(feature = "libtorch")]
+            (ModelType::GPTJ, _) => Ok(TextGenerationOption::GPTJ(
+                torch_models::GptJGenerator::new(config.into())?,
+            )),
+            #[cfg(feature = "libtorch")]
+            #[cfg(feature = "libtorch")]
+            (ModelType::T5, _) => Ok(TextGenerationOption::T5(torch_models::T5Generator::new(
                 config.into(),
             )?)),
-            (ModelType::OpenAiGpt, _) => Ok(TextGenerationOption::GPT(OpenAIGenerator::new(
-                config.into(),
-            )?)),
-            (ModelType::XLNet, _) => Ok(TextGenerationOption::XLNet(XLNetGenerator::new(
-                config.into(),
-            )?)),
-            (ModelType::Reformer, _) => Ok(TextGenerationOption::Reformer(ReformerGenerator::new(
-                config.into(),
-            )?)),
-            (ModelType::GPTNeo, _) => Ok(TextGenerationOption::GPTNeo(GptNeoGenerator::new(
-                config.into(),
-            )?)),
-            (ModelType::GPTJ, _) => Ok(TextGenerationOption::GPTJ(GptJGenerator::new(
-                config.into(),
-            )?)),
-            (ModelType::T5, _) => Ok(TextGenerationOption::T5(T5Generator::new(config.into())?)),
             _ => Err(RustBertError::InvalidConfigurationError(format!(
                 "Text generation not implemented for {:?}!",
                 config.model_type
@@ -256,28 +292,35 @@ impl TextGenerationOption {
             (_, &ModelResource::ONNX(_)) => Ok(TextGenerationOption::ONNX(
                 ONNXCausalGenerator::new_with_tokenizer(config.into(), tokenizer, None)?,
             )),
+            #[cfg(feature = "libtorch")]
             (ModelType::GPT2, _) => Ok(TextGenerationOption::GPT2(
-                GPT2Generator::new_with_tokenizer(config.into(), tokenizer)?,
+                torch_models::GPT2Generator::new_with_tokenizer(config.into(), tokenizer)?,
             )),
+            #[cfg(feature = "libtorch")]
             (ModelType::OpenAiGpt, _) => Ok(TextGenerationOption::GPT(
-                OpenAIGenerator::new_with_tokenizer(config.into(), tokenizer)?,
+                torch_models::OpenAIGenerator::new_with_tokenizer(config.into(), tokenizer)?,
             )),
+            #[cfg(feature = "libtorch")]
             (ModelType::XLNet, _) => Ok(TextGenerationOption::XLNet(
-                XLNetGenerator::new_with_tokenizer(config.into(), tokenizer)?,
+                torch_models::XLNetGenerator::new_with_tokenizer(config.into(), tokenizer)?,
             )),
+            #[cfg(feature = "libtorch")]
             (ModelType::Reformer, _) => Ok(TextGenerationOption::Reformer(
-                ReformerGenerator::new_with_tokenizer(config.into(), tokenizer)?,
+                torch_models::ReformerGenerator::new_with_tokenizer(config.into(), tokenizer)?,
             )),
+            #[cfg(feature = "libtorch")]
             (ModelType::GPTNeo, _) => Ok(TextGenerationOption::GPTNeo(
-                GptNeoGenerator::new_with_tokenizer(config.into(), tokenizer)?,
+                torch_models::GptNeoGenerator::new_with_tokenizer(config.into(), tokenizer)?,
             )),
+            #[cfg(feature = "libtorch")]
             (ModelType::GPTJ, _) => Ok(TextGenerationOption::GPTJ(
-                GptJGenerator::new_with_tokenizer(config.into(), tokenizer)?,
+                torch_models::GptJGenerator::new_with_tokenizer(config.into(), tokenizer)?,
             )),
-            (ModelType::T5, _) => Ok(TextGenerationOption::T5(T5Generator::new_with_tokenizer(
-                config.into(),
-                tokenizer,
-            )?)),
+            #[cfg(feature = "libtorch")]
+            #[cfg(feature = "libtorch")]
+            (ModelType::T5, _) => Ok(TextGenerationOption::T5(
+                torch_models::T5Generator::new_with_tokenizer(config.into(), tokenizer)?,
+            )),
             _ => Err(RustBertError::InvalidConfigurationError(format!(
                 "Text generation not implemented for {:?}!",
                 config.model_type
@@ -288,12 +331,19 @@ impl TextGenerationOption {
     /// Returns the `ModelType` for this TextGenerationOption
     pub fn model_type(&self) -> ModelType {
         match *self {
+            #[cfg(feature = "libtorch")]
             Self::GPT(_) => ModelType::OpenAiGpt,
+            #[cfg(feature = "libtorch")]
             Self::GPT2(_) => ModelType::GPT2,
+            #[cfg(feature = "libtorch")]
             Self::GPTNeo(_) => ModelType::GPTNeo,
+            #[cfg(feature = "libtorch")]
             Self::GPTJ(_) => ModelType::GPTJ,
+            #[cfg(feature = "libtorch")]
             Self::XLNet(_) => ModelType::XLNet,
+            #[cfg(feature = "libtorch")]
             Self::Reformer(_) => ModelType::Reformer,
+            #[cfg(feature = "libtorch")]
             Self::T5(_) => ModelType::T5,
             #[cfg(feature = "onnx")]
             Self::ONNX(_) => ModelType::ONNX,
@@ -302,12 +352,19 @@ impl TextGenerationOption {
     /// Interface method to access tokenizer
     pub fn get_tokenizer(&self) -> &TokenizerOption {
         match self {
+            #[cfg(feature = "libtorch")]
             Self::GPT(model_ref) => model_ref.get_tokenizer(),
+            #[cfg(feature = "libtorch")]
             Self::GPT2(model_ref) => model_ref.get_tokenizer(),
+            #[cfg(feature = "libtorch")]
             Self::GPTNeo(model_ref) => model_ref.get_tokenizer(),
+            #[cfg(feature = "libtorch")]
             Self::GPTJ(model_ref) => model_ref.get_tokenizer(),
+            #[cfg(feature = "libtorch")]
             Self::XLNet(model_ref) => model_ref.get_tokenizer(),
+            #[cfg(feature = "libtorch")]
             Self::Reformer(model_ref) => model_ref.get_tokenizer(),
+            #[cfg(feature = "libtorch")]
             Self::T5(model_ref) => model_ref.get_tokenizer(),
             #[cfg(feature = "onnx")]
             Self::ONNX(model_ref) => model_ref.get_tokenizer(),
@@ -317,12 +374,19 @@ impl TextGenerationOption {
     /// Interface method to access tokenizer
     pub fn get_tokenizer_mut(&mut self) -> &mut TokenizerOption {
         match self {
+            #[cfg(feature = "libtorch")]
             Self::GPT(model_ref) => model_ref.get_tokenizer_mut(),
+            #[cfg(feature = "libtorch")]
             Self::GPT2(model_ref) => model_ref.get_tokenizer_mut(),
+            #[cfg(feature = "libtorch")]
             Self::GPTNeo(model_ref) => model_ref.get_tokenizer_mut(),
+            #[cfg(feature = "libtorch")]
             Self::GPTJ(model_ref) => model_ref.get_tokenizer_mut(),
+            #[cfg(feature = "libtorch")]
             Self::XLNet(model_ref) => model_ref.get_tokenizer_mut(),
+            #[cfg(feature = "libtorch")]
             Self::Reformer(model_ref) => model_ref.get_tokenizer_mut(),
+            #[cfg(feature = "libtorch")]
             Self::T5(model_ref) => model_ref.get_tokenizer_mut(),
             #[cfg(feature = "onnx")]
             Self::ONNX(model_ref) => model_ref.get_tokenizer_mut(),
@@ -345,36 +409,43 @@ impl TextGenerationOption {
             ..Default::default()
         });
         Ok(match *self {
+            #[cfg(feature = "libtorch")]
             Self::GPT(ref model) => model
                 .generate_indices(prompt_texts, generate_options)?
                 .into_iter()
                 .map(|output| output.indices)
                 .collect(),
+            #[cfg(feature = "libtorch")]
             Self::GPT2(ref model) => model
                 .generate_indices(prompt_texts, generate_options)?
                 .into_iter()
                 .map(|output| output.indices)
                 .collect(),
+            #[cfg(feature = "libtorch")]
             Self::GPTNeo(ref model) => model
                 .generate_indices(prompt_texts, generate_options)?
                 .into_iter()
                 .map(|output| output.indices)
                 .collect(),
+            #[cfg(feature = "libtorch")]
             Self::GPTJ(ref model) => model
                 .generate_indices(prompt_texts, generate_options)?
                 .into_iter()
                 .map(|output| output.indices)
                 .collect(),
+            #[cfg(feature = "libtorch")]
             Self::XLNet(ref model) => model
                 .generate_indices(prompt_texts, generate_options)?
                 .into_iter()
                 .map(|output| output.indices)
                 .collect(),
+            #[cfg(feature = "libtorch")]
             Self::Reformer(ref model) => model
                 .generate_indices(prompt_texts, generate_options)?
                 .into_iter()
                 .map(|output| output.indices)
                 .collect(),
+            #[cfg(feature = "libtorch")]
             Self::T5(ref model) => model
                 .generate_indices(prompt_texts, generate_options)?
                 .into_iter()
@@ -391,12 +462,19 @@ impl TextGenerationOption {
 
     pub fn half(&mut self) -> Result<(), RustBertError> {
         match self {
+            #[cfg(feature = "libtorch")]
             Self::GPT(model_ref) => model_ref.half(),
+            #[cfg(feature = "libtorch")]
             Self::GPT2(model_ref) => model_ref.half(),
+            #[cfg(feature = "libtorch")]
             Self::GPTNeo(model_ref) => model_ref.half(),
+            #[cfg(feature = "libtorch")]
             Self::GPTJ(model_ref) => model_ref.half(),
+            #[cfg(feature = "libtorch")]
             Self::XLNet(model_ref) => model_ref.half(),
+            #[cfg(feature = "libtorch")]
             Self::Reformer(model_ref) => model_ref.half(),
+            #[cfg(feature = "libtorch")]
             Self::T5(model_ref) => model_ref.half(),
             #[cfg(feature = "onnx")]
             Self::ONNX(_) => Err(RustBertError::OrtError(
@@ -407,12 +485,19 @@ impl TextGenerationOption {
 
     pub fn float(&mut self) -> Result<(), RustBertError> {
         match self {
+            #[cfg(feature = "libtorch")]
             Self::GPT(model_ref) => model_ref.float(),
+            #[cfg(feature = "libtorch")]
             Self::GPT2(model_ref) => model_ref.float(),
+            #[cfg(feature = "libtorch")]
             Self::GPTNeo(model_ref) => model_ref.float(),
+            #[cfg(feature = "libtorch")]
             Self::GPTJ(model_ref) => model_ref.float(),
+            #[cfg(feature = "libtorch")]
             Self::XLNet(model_ref) => model_ref.float(),
+            #[cfg(feature = "libtorch")]
             Self::Reformer(model_ref) => model_ref.float(),
+            #[cfg(feature = "libtorch")]
             Self::T5(model_ref) => model_ref.float(),
             #[cfg(feature = "onnx")]
             Self::ONNX(_) => Err(RustBertError::OrtError(
@@ -421,14 +506,25 @@ impl TextGenerationOption {
         }
     }
 
-    pub fn set_device(&mut self, device: Device) -> Result<(), RustBertError> {
+    pub fn set_device(&mut self, device: crate::Device) -> Result<(), RustBertError> {
+        #[cfg(feature = "libtorch")]
+        let device: tch::Device = device.into();
+        #[cfg(not(feature = "libtorch"))]
+        let device = device;
         match self {
+            #[cfg(feature = "libtorch")]
             Self::GPT(model_ref) => model_ref.set_device(device),
+            #[cfg(feature = "libtorch")]
             Self::GPT2(model_ref) => model_ref.set_device(device),
+            #[cfg(feature = "libtorch")]
             Self::GPTNeo(model_ref) => model_ref.set_device(device),
+            #[cfg(feature = "libtorch")]
             Self::GPTJ(model_ref) => model_ref.set_device(device),
+            #[cfg(feature = "libtorch")]
             Self::XLNet(model_ref) => model_ref.set_device(device),
+            #[cfg(feature = "libtorch")]
             Self::Reformer(model_ref) => model_ref.set_device(device),
+            #[cfg(feature = "libtorch")]
             Self::T5(model_ref) => model_ref.set_device(device),
             #[cfg(feature = "onnx")]
             Self::ONNX(_) => Err(RustBertError::OrtError(
@@ -569,7 +665,7 @@ with people, even a bishop, begging for his blessing. <eod> </s> <eos>"
         self.model.float()
     }
 
-    pub fn set_device(&mut self, device: Device) -> Result<(), RustBertError> {
+    pub fn set_device(&mut self, device: crate::Device) -> Result<(), RustBertError> {
         self.model.set_device(device)
     }
 

@@ -24,9 +24,10 @@ use crate::deberta_v2::DebertaV2Config;
 use crate::distilbert::DistilBertConfig;
 use crate::electra::ElectraConfig;
 use crate::fnet::FNetConfig;
+use crate::gpt2::Gpt2Config;
 use crate::longformer::LongformerConfig;
+use crate::mbart::MBartConfig;
 use crate::mobilebert::MobileBertConfig;
-#[cfg(feature = "libtorch")]
 use crate::pipelines::translation::Language;
 use crate::resources::{Resource, ResourceProvider};
 use crate::xlnet::XLNetConfig;
@@ -35,13 +36,11 @@ use crate::Config;
 #[cfg(feature = "libtorch")]
 mod torch_configs {
     pub use crate::bart::BartConfig;
-    pub use crate::gpt2::Gpt2Config;
     pub use crate::gpt_j::GptJConfig;
     pub use crate::gpt_neo::GptNeoConfig;
     pub use crate::longt5::LongT5Config;
     pub use crate::m2m_100::M2M100Config;
     pub use crate::marian::MarianConfig;
-    pub use crate::mbart::MBartConfig;
     pub use crate::openai_gpt::OpenAiGptConfig;
     pub use crate::pegasus::PegasusConfig;
     pub use crate::prophetnet::ProphetNetConfig;
@@ -235,8 +234,7 @@ pub enum ConfigOption {
     /// XLNet configuration
     XLNet(XLNetConfig),
     /// GPT2 configuration
-    #[cfg(feature = "libtorch")]
-    GPT2(torch_configs::Gpt2Config),
+    GPT2(Gpt2Config),
     /// GPT-J configuration
     #[cfg(feature = "libtorch")]
     GPTJ(torch_configs::GptJConfig),
@@ -257,11 +255,9 @@ pub enum ConfigOption {
     #[cfg(feature = "libtorch")]
     GPTNeo(torch_configs::GptNeoConfig),
     /// MBart configuration
-    #[cfg(feature = "libtorch")]
-    MBart(torch_configs::MBartConfig),
+    MBart(MBartConfig),
     /// M2M100 configuration
-    #[cfg(feature = "libtorch")]
-    M2M100(torch_configs::M2M100Config),
+    M2M100(MBartConfig),
     /// FNet configuration
     FNet(FNetConfig),
     /// ONNX Model configuration
@@ -335,8 +331,7 @@ impl ConfigOption {
             ModelType::LongT5 => ConfigOption::LongT5(torch_configs::LongT5Config::from_file(path)),
             ModelType::Albert => ConfigOption::Albert(AlbertConfig::from_file(path)),
             ModelType::XLNet => ConfigOption::XLNet(XLNetConfig::from_file(path)),
-            #[cfg(feature = "libtorch")]
-            ModelType::GPT2 => ConfigOption::GPT2(torch_configs::Gpt2Config::from_file(path)),
+            ModelType::GPT2 => ConfigOption::GPT2(Gpt2Config::from_file(path)),
             #[cfg(feature = "libtorch")]
             ModelType::GPTJ => ConfigOption::GPTJ(torch_configs::GptJConfig::from_file(path)),
             #[cfg(feature = "libtorch")]
@@ -361,11 +356,9 @@ impl ConfigOption {
             ModelType::Roberta | ModelType::XLMRoberta => {
                 ConfigOption::Roberta(BertConfig::from_file(path))
             }
-            #[cfg(feature = "libtorch")]
-            ModelType::MBart => ConfigOption::MBart(torch_configs::MBartConfig::from_file(path)),
-            #[cfg(feature = "libtorch")]
+            ModelType::MBart => ConfigOption::MBart(MBartConfig::from_file(path)),
             ModelType::M2M100 | ModelType::NLLB => {
-                ConfigOption::M2M100(torch_configs::M2M100Config::from_file(path))
+                ConfigOption::M2M100(MBartConfig::from_file(path))
             }
             ModelType::FNet => ConfigOption::FNet(FNetConfig::from_file(path)),
             #[cfg(feature = "onnx")]
@@ -435,12 +428,10 @@ impl ConfigOption {
                 .id2label
                 .as_ref()
                 .expect("No label dictionary (id2label) provided in configuration file"),
-            #[cfg(feature = "libtorch")]
             Self::MBart(config) => config
                 .id2label
                 .as_ref()
                 .expect("No label dictionary (id2label) provided in configuration file"),
-            #[cfg(feature = "libtorch")]
             Self::M2M100(config) => config
                 .id2label
                 .as_ref()
@@ -464,7 +455,6 @@ impl ConfigOption {
             Self::LongT5(_) => panic!("LongT5 does not use a label mapping"),
             #[cfg(feature = "libtorch")]
             Self::OpenAiGpt(_) => panic!("OpenAI GPT does not use a label mapping"),
-            #[cfg(feature = "libtorch")]
             Self::GPT2(_) => panic!("GPT2 does not use a label mapping"),
             #[cfg(feature = "libtorch")]
             Self::GPTJ(_) => panic!("GPT-J does not use a label mapping"),
@@ -493,7 +483,6 @@ impl ConfigOption {
             Self::LongT5(_) => None,
             Self::Albert(config) => Some(config.max_position_embeddings),
             Self::XLNet(_) => None,
-            #[cfg(feature = "libtorch")]
             Self::GPT2(config) => Some(config.n_positions),
             #[cfg(feature = "libtorch")]
             Self::GPTJ(config) => Some(config.n_positions),
@@ -508,9 +497,7 @@ impl ConfigOption {
             Self::OpenAiGpt(config) => Some(config.n_positions),
             #[cfg(feature = "libtorch")]
             Self::GPTNeo(config) => Some(config.max_position_embeddings),
-            #[cfg(feature = "libtorch")]
             Self::MBart(config) => Some(config.max_position_embeddings),
-            #[cfg(feature = "libtorch")]
             Self::M2M100(config) => Some(config.max_position_embeddings),
             Self::FNet(config) => Some(config.max_position_embeddings),
             Self::Roberta(config) => Some(config.max_position_embeddings),
@@ -537,7 +524,6 @@ impl ConfigOption {
             Self::LongT5(config) => config.vocab_size,
             Self::Albert(config) => config.vocab_size,
             Self::XLNet(config) => config.vocab_size,
-            #[cfg(feature = "libtorch")]
             Self::GPT2(config) => config.vocab_size,
             #[cfg(feature = "libtorch")]
             Self::GPTJ(config) => config.vocab_size,
@@ -552,9 +538,7 @@ impl ConfigOption {
             Self::OpenAiGpt(config) => config.vocab_size,
             #[cfg(feature = "libtorch")]
             Self::GPTNeo(config) => config.vocab_size,
-            #[cfg(feature = "libtorch")]
             Self::MBart(config) => config.vocab_size,
-            #[cfg(feature = "libtorch")]
             Self::M2M100(config) => config.vocab_size,
             Self::FNet(config) => config.vocab_size,
             Self::Roberta(config) => config.vocab_size,
@@ -581,7 +565,6 @@ impl ConfigOption {
             Self::LongT5(config) => config.decoder_start_token_id,
             Self::Albert(_) => None,
             Self::XLNet(_) => None,
-            #[cfg(feature = "libtorch")]
             Self::GPT2(config) => config.decoder_start_token_id,
             #[cfg(feature = "libtorch")]
             Self::GPTJ(config) => config.decoder_start_token_id,
@@ -596,9 +579,7 @@ impl ConfigOption {
             Self::OpenAiGpt(config) => config.decoder_start_token_id,
             #[cfg(feature = "libtorch")]
             Self::GPTNeo(config) => config.decoder_start_token_id,
-            #[cfg(feature = "libtorch")]
             Self::MBart(config) => config.decoder_start_token_id,
-            #[cfg(feature = "libtorch")]
             Self::M2M100(config) => config.decoder_start_token_id,
             Self::FNet(config) => config.decoder_start_token_id,
             Self::Roberta(_) => None,
@@ -625,7 +606,6 @@ impl ConfigOption {
             Self::LongT5(config) => config.forced_bos_token_id,
             Self::Albert(_) => None,
             Self::XLNet(_) => None,
-            #[cfg(feature = "libtorch")]
             Self::GPT2(config) => config.forced_bos_token_id,
             #[cfg(feature = "libtorch")]
             Self::GPTJ(config) => config.forced_bos_token_id,
@@ -640,9 +620,7 @@ impl ConfigOption {
             Self::OpenAiGpt(config) => config.forced_bos_token_id,
             #[cfg(feature = "libtorch")]
             Self::GPTNeo(config) => config.forced_bos_token_id,
-            #[cfg(feature = "libtorch")]
             Self::MBart(config) => config.forced_bos_token_id,
-            #[cfg(feature = "libtorch")]
             Self::M2M100(config) => config.forced_bos_token_id,
             Self::FNet(_) => None,
             Self::Roberta(_) => None,
@@ -669,7 +647,6 @@ impl ConfigOption {
             Self::LongT5(config) => config.forced_eos_token_id,
             Self::Albert(_) => None,
             Self::XLNet(_) => None,
-            #[cfg(feature = "libtorch")]
             Self::GPT2(config) => config.forced_eos_token_id,
             #[cfg(feature = "libtorch")]
             Self::GPTJ(config) => config.forced_eos_token_id,
@@ -684,9 +661,7 @@ impl ConfigOption {
             Self::OpenAiGpt(config) => config.forced_eos_token_id,
             #[cfg(feature = "libtorch")]
             Self::GPTNeo(config) => config.forced_eos_token_id,
-            #[cfg(feature = "libtorch")]
             Self::MBart(config) => config.forced_eos_token_id,
-            #[cfg(feature = "libtorch")]
             Self::M2M100(config) => config.forced_eos_token_id,
             Self::FNet(_) => None,
             Self::Roberta(_) => None,
@@ -1686,7 +1661,6 @@ impl TokenizerOption {
     }
 
     /// Helper function to prepare the input for translation models
-    #[cfg(feature = "libtorch")]
     pub fn get_prefix_and_forced_bos_id(
         &self,
         source_language: Option<&Language>,

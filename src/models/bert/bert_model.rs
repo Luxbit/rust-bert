@@ -1157,7 +1157,9 @@ mod test {
     #[test]
     #[ignore] // compilation is enough, no need to run
     fn bert_model_send() {
-        let config_resource = Box::new(RemoteResource::from_pretrained(crate::bert::BertConfigResources::BERT));
+        let config_resource = Box::new(RemoteResource::from_pretrained(
+            crate::bert::BertConfigResources::BERT,
+        ));
         let config_path = config_resource.get_local_path().expect("");
 
         //    Set-up masked LM model

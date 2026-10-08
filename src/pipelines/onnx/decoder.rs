@@ -1,4 +1,4 @@
-use crate::pipelines::generation_utils::{Cache, LMModelOutput};
+use crate::pipelines::generation_utils::{Cache, GeneratedLogits};
 use crate::pipelines::onnx::common::{get_input_output_mapping, InputOutputNameMapping};
 use crate::pipelines::onnx::config::{
     ONNXEnvironmentConfig, ATTENTION_MASK_NAME, ENCODER_ATTENTION_MASK_NAME,
@@ -44,7 +44,7 @@ impl ONNXDecoder {
         encoder_attention_mask: Option<&ArrayD<i64>>,
         position_ids: Option<&ArrayD<i64>>,
         layer_states: Option<&ONNXLayerCache>,
-    ) -> Result<LMModelOutput, RustBertError> {
+    ) -> Result<GeneratedLogits, RustBertError> {
         let mut input_dict: HashMap<&str, ONNXInput> = HashMap::new();
         if let Some(input_ids) = input_ids {
             input_dict.insert(INPUT_IDS_NAME, ONNXInput::I64(input_ids.clone()));
@@ -108,11 +108,6 @@ impl ONNXDecoder {
         let lm_logits_array =
             crate::pipelines::onnx::conversion::ort_output_to_array_f32(logits_value)?;
 
-        #[cfg(feature = "libtorch")]
-        let lm_logits = crate::common::tensor_conversion::array_to_tensor_f32(&lm_logits_array)?;
-        #[cfg(not(feature = "libtorch"))]
-        let lm_logits = lm_logits_array;
-
         let cache = if self.use_cache {
             Cache::ONNXCache(ONNXLayerCache::from_ort_output(
                 &outputs,
@@ -122,6 +117,9 @@ impl ONNXDecoder {
             Cache::None
         };
 
-        Ok(LMModelOutput { lm_logits, cache })
+        Ok(GeneratedLogits {
+            lm_logits: lm_logits_array,
+            cache,
+        })
     }
 }

@@ -66,33 +66,59 @@
 //! # ;
 //! ```
 
-use tch::kind::Kind::Int64;
-use tch::{no_grad, Device, Kind, Tensor};
+//! # Common logic for text generation
+//! Shared logic for text generation, including beam search, top-k and nucleus sampling, temperature setting and repetition penalty.
+//! Implementations of the `LanguageGenerator` trait are available for the following models:
+//! - GPT2
+//! - GPT
+//! - BART
+//! - T5
+//! - LongT5
+//! - MBart
+//! - M2M100
+//! - NLLB
+//! - Reformer
+//! - XLNet
+//! - GPT-Neo
+//! - GPT-J
+//! - Pegasus
+//! - ProphetNet
+//! - ONNX models (causal and conditional generators)
+//!
+//! The generation loop operates on `ndarray` arrays end-to-end, making it available for both the
+//! LibTorch and ONNX (ort) backends. Model implementations convert at the backend boundary: the
+//! key/value caches carried through the loop stay opaque and are only manipulated by the
+//! generators themselves (via `reorder_cache`).
 
-use crate::bart::LayerState as BartLayerState;
-use crate::common::resources::ResourceProvider;
-use crate::gpt_j::LayerState as GPTJLayerState;
-use crate::gpt_neo::LayerState as GPTNeoLayerState;
 use crate::pipelines::generation_utils::private_generation_utils::{
     InternalGenerateOptions, PrivateLanguageGenerator,
 };
-use crate::prophetnet::LayerState as ProphetNetLayerState;
-use crate::reformer::LayerState as ReformerLayerState;
-use crate::t5::LayerState as T5LayerState;
-use crate::xlnet::LayerState as XLNetLayerState;
 
 use self::ordered_float::OrderedFloat;
+use crate::common::resources::ResourceProvider;
 use crate::pipelines::common::{ModelResource, ModelType, TokenizerOption};
+use crate::Device;
 
 extern crate ordered_float;
 #[cfg(feature = "onnx")]
 use crate::pipelines::onnx::ONNXLayerCache;
 use crate::RustBertError;
-#[cfg(feature = "remote")]
+#[cfg(feature = "libtorch")]
+use crate::{
+    bart::LayerState as BartLayerState, gpt_j::LayerState as GPTJLayerState,
+    gpt_neo::LayerState as GPTNeoLayerState, prophetnet::LayerState as ProphetNetLayerState,
+    reformer::LayerState as ReformerLayerState, t5::LayerState as T5LayerState,
+    xlnet::LayerState as XLNetLayerState,
+};
+#[cfg(all(feature = "remote", feature = "libtorch"))]
 use crate::{
     gpt2::{Gpt2ConfigResources, Gpt2MergesResources, Gpt2ModelResources, Gpt2VocabResources},
     resources::RemoteResource,
 };
+use ndarray::{Array1, Array2, ArrayD, Ix2};
+use std::cmp::{max, min};
+#[cfg(feature = "libtorch")]
+use tch::{Kind, Tensor};
 
 /// # Configuration for text generation
 pub struct GenerateConfig {
@@ -136,11 +162,12 @@ pub struct GenerateConfig {
     pub diversity_penalty: Option<f64>,
     /// Device to place the model on (default: CUDA/GPU when available)
     pub device: Device,
-    /// Model weights precision. If not provided, will default to full precision on CPU, or the loaded weights precision otherwise
-    pub kind: Option<Kind>,
+    /// Model weights precision (LibTorch backend only). If not provided, will default to full precision on CPU, or the loaded weights precision otherwise
+    #[cfg(feature = "libtorch")]
+    pub kind: Option<tch::Kind>,
 }
 
-#[cfg(feature = "remote")]
+#[cfg(all(feature = "remote", feature = "libtorch"))]
 impl Default for GenerateConfig {
     fn default() -> GenerateConfig {
         GenerateConfig {
@@ -167,7 +194,7 @@ impl Default for GenerateConfig {
             num_return_sequences: 1,
             num_beam_groups: None,
             diversity_penalty: None,
-            device: Device::cuda_if_available(),
+            device: crate::Device::cuda_if_available(),
             kind: None,
         }
     }
@@ -224,18 +251,91 @@ impl GenerateConfig {
 
 #[derive(Debug)]
 pub enum Cache {
-    GPT2Cache(Option<Vec<Tensor>>),
+    #[cfg(feature = "libtorch")]
+    GPT2Cache(Option<Vec<tch::Tensor>>),
+    #[cfg(feature = "libtorch")]
     BARTCache(Option<Vec<(Option<BartLayerState>, Option<BartLayerState>)>>),
+    #[cfg(feature = "libtorch")]
     T5Cache(Option<Vec<(Option<T5LayerState>, Option<T5LayerState>)>>),
+    #[cfg(feature = "libtorch")]
     LongT5Cache(Option<Vec<(Option<T5LayerState>, Option<T5LayerState>)>>),
+    #[cfg(feature = "libtorch")]
     XLNetCache(Option<Vec<Option<XLNetLayerState>>>),
+    #[cfg(feature = "libtorch")]
     ReformerCache(Option<Vec<Option<ReformerLayerState>>>),
+    #[cfg(feature = "libtorch")]
     ProphetNetCache(Option<Vec<(Option<ProphetNetLayerState>, Option<ProphetNetLayerState>)>>),
+    #[cfg(feature = "libtorch")]
     GPTNeoCache(Option<Vec<Option<GPTNeoLayerState>>>),
+    #[cfg(feature = "libtorch")]
     GPTJCache(Option<Vec<Option<GPTJLayerState>>>),
     #[cfg(feature = "onnx")]
     ONNXCache(ONNXLayerCache),
     None,
+}
+
+/// Converts an optional 2-D integer array to an optional tensor (LibTorch only).
+#[cfg(feature = "libtorch")]
+pub(crate) fn option_array2_to_tensor(array: Option<&ndarray::Array2<i64>>) -> Option<Tensor> {
+    array.map(|array| {
+        crate::common::tensor_conversion::array_to_tensor_i64(&array.clone().into_dyn())
+            .expect("Error converting array input to tensor")
+    })
+}
+
+/// Converts an optional array to an optional tensor (LibTorch only).
+#[cfg(feature = "libtorch")]
+pub(crate) fn option_array_to_tensor_f32(array: Option<&ArrayD<f32>>) -> Option<Tensor> {
+    array.map(|array| {
+        crate::common::tensor_conversion::array_to_tensor_f32(array)
+            .expect("Error converting array input to tensor")
+    })
+}
+
+/// Append a column of values to the right of a 2-D array.
+pub(crate) fn append_column(array: &Array2<i64>, column: &[i64]) -> Array2<i64> {
+    let (rows, cols) = (array.nrows(), array.ncols());
+    let mut out = Array2::<i64>::zeros((rows, cols + 1));
+    out.slice_mut(ndarray::s![.., ..cols]).assign(array);
+    for (row, &value) in column.iter().enumerate() {
+        out[[row, cols]] = value;
+    }
+    out
+}
+
+/// Extract the last column of a 2-D integer array as a new 2-D array (n x 1).
+pub(crate) fn last_column(array: &ndarray::Array2<i64>) -> ndarray::Array2<i64> {
+    ndarray::Array2::from_shape_vec((array.nrows(), 1), array.column(array.ncols() - 1).to_vec())
+        .unwrap()
+}
+
+/// Index-select rows of a 2-D integer array.
+pub(crate) fn index_select_rows_i64(array: &Array2<i64>, indices: &[i64]) -> Array2<i64> {
+    crate::common::tensor_ops::gather_rows(&array.clone().into_dyn(), indices)
+        .into_dimensionality::<Ix2>()
+        .expect("Row selection should return a 2-D array")
+}
+
+/// Weighted sampling without replacement (Efraimidis-Spirakis). Returns the indices of the
+/// sampled items, ordered by decreasing weight.
+pub(crate) fn weighted_sample_without_replacement(
+    weights: &[f32],
+    num_samples: usize,
+) -> Vec<usize> {
+    use rand::Rng;
+    let mut rng = rand::rng();
+    let mut keys: Vec<(f64, usize)> = weights
+        .iter()
+        .enumerate()
+        .filter(|(_, &weight)| weight > 0f32)
+        .map(|(index, &weight)| {
+            let u: f64 = rng.random::<f64>().clamp(f64::EPSILON, 1.0);
+            ((u.ln() / weight as f64), index)
+        })
+        .collect();
+    keys.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    keys.truncate(num_samples);
+    keys.into_iter().map(|(_, index)| index).collect()
 }
 
 pub(crate) mod private_generation_utils {
@@ -246,16 +346,31 @@ pub(crate) mod private_generation_utils {
     use std::mem;
 
     use rust_tokenizers::tokenizer::{truncate_sequences, TruncationStrategy};
-    use tch::{nn, Device, Kind, Tensor};
+    #[cfg(feature = "libtorch")]
+    use tch::{nn, Tensor};
 
     use crate::pipelines::common::TokenizerOption;
     use crate::pipelines::generation_utils::{
-        BeamHypotheses, Cache, GenerateConfig, LMModelOutput, PrefixAllowedFunction,
+        append_column, index_select_rows_i64, weighted_sample_without_replacement, BeamHypotheses,
+        Cache, GenerateConfig, GeneratedLogits, PrefixAllowedFunction,
     };
 
     use super::ordered_float::OrderedFloat;
-    use crate::common::kind::{get_negative_infinity, get_positive_infinity};
     use crate::RustBertError;
+    use ndarray::{Array1, Array2, ArrayD, Ix1, Ix2};
+
+    const NEG_INF: f32 = f32::NEG_INFINITY;
+
+    /// Runs the provided closure under a LibTorch no-grad context (no-op for the ONNX backend).
+    #[cfg(feature = "libtorch")]
+    pub(crate) fn no_grad<T>(f: impl FnOnce() -> T) -> T {
+        tch::no_grad(f)
+    }
+
+    #[cfg(not(feature = "libtorch"))]
+    pub(crate) fn no_grad<T>(f: impl FnOnce() -> T) -> T {
+        f()
+    }
 
     pub struct InternalGenerateOptions<'a> {
         pub min_length: i64,
@@ -279,23 +394,24 @@ pub(crate) mod private_generation_utils {
     }
 
     pub struct PreparedInput<'a> {
-        pub prepared_input: Option<Tensor>,
-        pub prepared_attention_mask: Option<Tensor>,
-        pub prepared_encoder_output: Option<&'a Tensor>,
-        pub prepared_decoder_input: Option<Tensor>,
-        pub prepared_position_ids: Option<Tensor>,
+        pub prepared_input: Option<Array2<i64>>,
+        pub prepared_attention_mask: Option<Array2<i64>>,
+        pub prepared_encoder_output: Option<&'a ArrayD<f32>>,
+        pub prepared_decoder_input: Option<Array2<i64>>,
+        pub prepared_position_ids: Option<Array2<i64>>,
         pub prepared_past: Cache,
     }
 
     pub struct GeneratedOutputWithScores {
-        pub indices: Tensor,
+        pub indices: Array2<i64>,
         pub scores: Option<Vec<f64>>,
         pub token_scores: Option<Vec<Vec<f64>>>,
     }
 
     pub trait PrivateLanguageGenerator {
         fn _get_tokenizer(&self) -> &TokenizerOption;
-        fn get_device(&self) -> Device;
+        fn get_device(&self) -> crate::Device;
+        #[cfg(feature = "libtorch")]
         fn get_var_store_mut(&mut self) -> Result<&mut nn::VarStore, RustBertError>;
         fn _get_tokenizer_mut(&mut self) -> &mut TokenizerOption;
         fn get_config(&self) -> &GenerateConfig;
@@ -315,20 +431,20 @@ pub(crate) mod private_generation_utils {
 
         fn forward_t(
             &self,
-            input_ids: Option<&Tensor>,
+            input_ids: Option<&Array2<i64>>,
             layer_past: Cache,
-            attention_mask: Option<&Tensor>,
-            token_type_ids: Option<&Tensor>,
-            position_ids: Option<&Tensor>,
-            input_embeds: Option<&Tensor>,
-            encoder_outputs: Option<&Tensor>,
-            decoder_input_ids: Option<&Tensor>,
+            attention_mask: Option<&Array2<i64>>,
+            token_type_ids: Option<&Array2<i64>>,
+            position_ids: Option<&Array2<i64>>,
+            input_embeds: Option<&ArrayD<f32>>,
+            encoder_outputs: Option<&ArrayD<f32>>,
+            decoder_input_ids: Option<&Array2<i64>>,
             train: bool,
-        ) -> Result<LMModelOutput, RustBertError>;
+        ) -> Result<GeneratedLogits, RustBertError>;
 
         fn prepare_scores_for_generation(
             &self,
-            scores: &mut Tensor,
+            scores: &mut Array2<f32>,
             current_length: i64,
             max_length: Option<i64>,
             forced_bos_token_id: Option<i64>,
@@ -356,16 +472,20 @@ pub(crate) mod private_generation_utils {
             }
         }
 
-        fn encode(&self, _input_ids: &Tensor, _attention_mask: Option<&Tensor>) -> Option<Tensor> {
+        fn encode(
+            &self,
+            _input_ids: &Array2<i64>,
+            _attention_mask: Option<&Array2<i64>>,
+        ) -> Option<ArrayD<f32>> {
             None
         }
 
         fn prepare_inputs_for_generation<'a>(
             &self,
-            input_ids: Tensor,
-            _encoder_outputs: Option<&'a Tensor>,
+            input_ids: Array2<i64>,
+            _encoder_outputs: Option<&'a ArrayD<f32>>,
             past: Cache,
-            attention_mask: Tensor,
+            attention_mask: Array2<i64>,
         ) -> PreparedInput<'a> {
             PreparedInput {
                 prepared_input: Some(input_ids),
@@ -382,7 +502,7 @@ pub(crate) mod private_generation_utils {
             prompt_text: &[S],
             max_len: Option<i64>,
             pad_token_id: Option<i64>,
-        ) -> Tensor
+        ) -> Array2<i64>
         where
             S: AsRef<str> + Send + Sync,
         {
@@ -454,61 +574,49 @@ pub(crate) mod private_generation_utils {
                 None => self._get_tokenizer().get_unk_id(),
             };
 
-            let token_ids = token_ids
-                .into_iter()
-                .map(|mut input| {
-                    let mut temp = vec![pad_token; max_len - input.len()];
-                    if self.is_encoder_decoder() {
-                        input.extend(temp);
-                        input
-                    } else {
-                        // Pad left for causal generation
-                        temp.extend(input);
-                        temp
-                    }
-                })
-                .map(|tokens| Tensor::from_slice(&tokens).to(self.get_device()))
-                .collect::<Vec<Tensor>>();
-
-            Tensor::stack(&token_ids, 0)
+            let rows = token_ids.len();
+            let mut output = Array2::<i64>::zeros((rows, max_len));
+            for (row, mut input) in token_ids.into_iter().enumerate() {
+                let mut temp = vec![pad_token; max_len - input.len()];
+                if self.is_encoder_decoder() {
+                    input.extend(temp);
+                } else {
+                    // Pad left for causal generation
+                    temp.extend(input);
+                    input = temp;
+                }
+                output.row_mut(row).assign(&Array1::from(input));
+            }
+            output
         }
 
         fn enforce_repetition_penalty(
             &self,
-            next_token_logits: &mut Tensor,
-            batch_size: i64,
-            num_beams: i64,
-            prev_output_tokens: &Tensor,
+            next_token_logits: &mut Array2<f32>,
+            _batch_size: i64,
+            _num_beams: i64,
+            prev_output_tokens: &Array2<i64>,
             repetition_penalty: f64,
         ) {
-            for i in 0..(batch_size * num_beams) {
-                for token_position in 0..prev_output_tokens.get(i).size()[0] {
-                    let token = prev_output_tokens.get(i).int64_value(&[token_position]);
-                    let updated_value = &next_token_logits.double_value(&[i, token]);
-                    if updated_value < &0f64 {
-                        let _ = next_token_logits.get(i).index_fill_(
-                            0,
-                            &Tensor::from_slice(&[token])
-                                .to_kind(Kind::Int64)
-                                .to_device(next_token_logits.device()),
-                            updated_value * repetition_penalty,
-                        );
+            for row in 0..next_token_logits.nrows() {
+                if row >= prev_output_tokens.nrows() {
+                    break;
+                }
+                for &token in prev_output_tokens.row(row) {
+                    let updated_value = next_token_logits[[row, token as usize]] as f64;
+                    let penalized = if updated_value < 0f64 {
+                        updated_value * repetition_penalty
                     } else {
-                        let _ = next_token_logits.get(i).index_fill_(
-                            0,
-                            &Tensor::from_slice(&[token])
-                                .to_kind(Kind::Int64)
-                                .to_device(next_token_logits.device()),
-                            updated_value / repetition_penalty,
-                        );
-                    }
+                        updated_value / repetition_penalty
+                    };
+                    next_token_logits[[row, token as usize]] = penalized as f32;
                 }
             }
         }
 
         fn get_banned_tokens(
             &self,
-            input_ids: &Tensor,
+            input_ids: &Array2<i64>,
             no_repeat_ngram_size: i64,
             cur_len: i64,
         ) -> Vec<Vec<i64>> {
@@ -516,17 +624,12 @@ pub(crate) mod private_generation_utils {
             if cur_len + 1 < no_repeat_ngram_size {
                 vec![vec![]]
             } else {
-                let input_ids = input_ids.to(Device::Cpu);
-                let num_hypothesis = *input_ids.size().first().unwrap();
-                let mut banned_tokens: Vec<Vec<i64>> = Vec::with_capacity(num_hypothesis as usize);
+                let num_hypothesis = input_ids.nrows();
+                let mut banned_tokens: Vec<Vec<i64>> = Vec::with_capacity(num_hypothesis);
                 for hypothesis_index in 0..num_hypothesis {
-                    let hypothesis_input_ids = input_ids.get(hypothesis_index);
+                    let hypothesis_input_ids = input_ids.row(hypothesis_index).to_vec();
                     let mut generated_ngram: HashMap<Vec<i64>, Vec<i64>> = HashMap::new();
-                    let input: Vec<i64> = (0..hypothesis_input_ids.size1().unwrap()).collect();
-                    let hypothesis_input_ids = hypothesis_input_ids
-                        .iter::<i64>()
-                        .unwrap()
-                        .collect::<Vec<i64>>();
+                    let input: Vec<i64> = (0..hypothesis_input_ids.len() as i64).collect();
                     let query = &hypothesis_input_ids
                         [cur_len as usize + 1 - no_repeat_ngram_size as usize..]
                         .to_vec();
@@ -554,121 +657,128 @@ pub(crate) mod private_generation_utils {
 
         fn top_k_top_p_filtering(
             &self,
-            logits: &mut Tensor,
+            logits: &mut Array2<f32>,
             top_k: i64,
             top_p: f64,
             min_tokens_to_keep: i64,
         ) {
             //        Nucleus and top-k filtering introduced by Holtzman et al. (http://arxiv.org/abs/1904.09751)
             //        Ported from https://gist.github.com/thomwolf/1a5a29f6962089e871b94cbd09daf317
-            let vocab_size = *logits.size().last().unwrap();
+            let vocab_size = logits.ncols() as i64;
             if top_k > 0 {
-                let top_k = vocab_size - min(max(top_k, min_tokens_to_keep), vocab_size);
-                let (_, indices_to_remove) = logits.topk(top_k, -1, false, false);
-                for index in 0..*logits.size().first().unwrap() {
-                    let _ = logits.get(index).index_fill_(
-                        0,
-                        &indices_to_remove.get(index),
-                        f64::NEG_INFINITY,
-                    );
+                let keep = min(max(top_k, min_tokens_to_keep), vocab_size) as usize;
+                for mut row in logits.rows_mut().into_iter() {
+                    let mut order: Vec<usize> = (0..row.len()).collect();
+                    order.sort_unstable_by(|&a, &b| {
+                        row[b]
+                            .partial_cmp(&row[a])
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    });
+                    for &remove_index in &order[keep..] {
+                        row[remove_index] = NEG_INF;
+                    }
                 }
             }
             if top_p < 1f64 {
-                let (sorted_logits, sorted_indices) = logits.sort(-1, true);
-                let cumulative_probabilities = sorted_logits
-                    .softmax(-1, sorted_logits.kind())
-                    .cumsum(-1, sorted_logits.kind());
-                let mut sorted_indices_to_remove =
-                    cumulative_probabilities.ge(top_p).to_kind(Kind::Int64);
-                if min_tokens_to_keep > 1 {
-                    let _ = sorted_indices_to_remove.index_fill_(
-                        1,
-                        &Tensor::arange_start(
-                            0,
-                            min_tokens_to_keep + 1,
-                            (Kind::Int64, logits.device()),
-                        ),
-                        0,
-                    );
+                let mut sorted_logits_rows: Vec<Vec<f32>> = Vec::with_capacity(logits.nrows());
+                let mut sorted_indices_rows: Vec<Vec<usize>> = Vec::with_capacity(logits.nrows());
+                for row in logits.rows().into_iter() {
+                    let mut order: Vec<usize> = (0..row.len()).collect();
+                    order.sort_unstable_by(|&a, &b| {
+                        row[b]
+                            .partial_cmp(&row[a])
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    });
+                    let sorted: Vec<f32> = order.iter().map(|&index| row[index]).collect();
+                    sorted_logits_rows.push(sorted);
+                    sorted_indices_rows.push(order);
                 }
-                let _ = sorted_indices_to_remove.index_copy_(
-                    1,
-                    &Tensor::arange_start(1, vocab_size, (Kind::Int64, logits.device())),
-                    &sorted_indices_to_remove
-                        .slice(1, 0, vocab_size - 1, 1)
-                        .copy(),
-                );
-                let _ = sorted_indices_to_remove.index_fill_(
-                    1,
-                    &Tensor::from_slice(&[0])
-                        .to_kind(Kind::Int64)
-                        .to_device(sorted_indices_to_remove.device()),
-                    0,
-                );
-                let indices_to_remove = sorted_indices_to_remove
-                    .scatter(1, &sorted_indices, &sorted_indices_to_remove)
-                    .to_kind(Kind::Bool);
-                let _ = logits.masked_fill_(&indices_to_remove, f64::NEG_INFINITY);
+                // Remove tokens with cumulative probability above the threshold
+                let mut remove_flags: Vec<Vec<bool>> = Vec::with_capacity(sorted_logits_rows.len());
+                for (row_index, sorted_row) in sorted_logits_rows.iter().enumerate() {
+                    let total: f32 = sorted_row.iter().sum();
+                    let mut cumulative = 0f32;
+                    let mut flags = vec![false; sorted_row.len()];
+                    for (position, &value) in sorted_row.iter().enumerate() {
+                        if position > 0 && (cumulative / total) > top_p as f32 {
+                            flags[position] = true;
+                        }
+                        cumulative += value;
+                    }
+                    if min_tokens_to_keep > 1 {
+                        for flag in flags.iter_mut().take(min_tokens_to_keep as usize + 1) {
+                            *flag = false;
+                        }
+                    }
+                    let _ = row_index;
+                    remove_flags.push(flags);
+                }
+                // Scatter back to the original token order
+                for (row_index, order) in sorted_indices_rows.iter().enumerate() {
+                    for (position, &token_index) in order.iter().enumerate() {
+                        if remove_flags[row_index][position] {
+                            logits[[row_index, token_index]] = NEG_INF;
+                        }
+                    }
+                }
             }
         }
 
         fn run_hamming_diversity_penalty(
             &self,
-            scores: &mut Tensor,
-            current_tokens: &Tensor,
-            diversity_penalty: f64,
+            scores: &mut Array2<f32>,
+            current_tokens: &Array1<i64>,
+            diversity_penalty: f32,
             num_beams: i64,
             batch_size: i64,
             group_size: i64,
             group_start_index: i64,
         ) {
             if group_start_index > 0 {
-                let vocab_size = *scores.size().last().unwrap();
+                let vocab_size = scores.ncols();
                 for batch_index in 0..batch_size {
-                    let previous_group_tokens = current_tokens.slice(
-                        0,
-                        batch_index * num_beams,
-                        batch_index * num_beams + group_start_index,
-                        1,
-                    );
-                    let diversity_penalty = previous_group_tokens
-                        .bincount::<Tensor>(None, vocab_size)
-                        * diversity_penalty;
-                    let _ = scores
-                        .slice(
-                            0,
-                            batch_index * group_size,
-                            (batch_index + 1) * group_size,
-                            1,
-                        )
-                        .subtract_(&diversity_penalty);
+                    let mut counts = vec![0i64; vocab_size];
+                    for beam_index in
+                        (batch_index * num_beams)..(batch_index * num_beams + group_start_index)
+                    {
+                        let token = current_tokens[beam_index as usize];
+                        if token >= 0 && (token as usize) < vocab_size {
+                            counts[token as usize] += 1;
+                        }
+                    }
+                    for beam_index in (batch_index * group_size)..((batch_index + 1) * group_size) {
+                        for (token, &count) in counts.iter().enumerate() {
+                            if count > 0 {
+                                scores[[beam_index as usize, token]] -=
+                                    count as f32 * diversity_penalty;
+                            }
+                        }
+                    }
                 }
             }
         }
 
         fn apply_prefix_allowed_tokens_function(
             &self,
-            prefix_allowed_tokens_fn: &dyn Fn(i64, &Tensor) -> Vec<i64>,
+            prefix_allowed_tokens_fn: &dyn Fn(i64, &[i64]) -> Vec<i64>,
             num_beams: i64,
-            input_ids: &Tensor,
-            scores: &mut Tensor,
+            input_ids: &Array2<i64>,
+            scores: &mut Array2<f32>,
         ) {
-            let mask = scores.new_full(
-                scores.size().as_slice(),
-                get_positive_infinity(scores.kind()).unwrap(),
-                (scores.kind(), scores.device()),
-            );
-            for idx in 0..scores.size()[0] {
-                let batch_id = idx / num_beams;
-                let allowed_tokens: Vec<i64> =
-                    prefix_allowed_tokens_fn(batch_id, &input_ids.get(idx));
-                let _ = mask.get(idx).index_fill_(
-                    0,
-                    &Tensor::from_slice(allowed_tokens.as_slice()).to(scores.device()),
-                    0,
-                );
+            for idx in 0..scores.nrows() {
+                let batch_id = (idx as i64) / num_beams;
+                let row: Vec<i64> = input_ids.row(min(idx, input_ids.nrows() - 1)).to_vec();
+                let allowed_tokens = prefix_allowed_tokens_fn(batch_id, &row);
+                let mut mask = vec![get_positive_infinity_f32(); scores.ncols()];
+                for token in allowed_tokens {
+                    if (token as usize) < mask.len() {
+                        mask[token as usize] = 0f32;
+                    }
+                }
+                for (token, &penalty) in mask.iter().enumerate() {
+                    scores[[idx, token]] -= penalty;
+                }
             }
-            let _ = scores.subtract_(&mask);
         }
 
         fn split_bad_word_ids<'a>(
@@ -714,17 +824,16 @@ pub(crate) mod private_generation_utils {
 
         fn calc_static_bad_word_mask(
             &self,
-            scores: &Tensor,
+            scores: &Array2<f32>,
             bad_words_id_length_1: &[i64],
-        ) -> Tensor {
-            let mut static_bad_words_mask =
-                Tensor::zeros([scores.size()[1]], (Kind::Int8, scores.device()));
-            let _ = static_bad_words_mask.index_fill_(
-                0,
-                &Tensor::from_slice(bad_words_id_length_1).to_device(scores.device()),
-                1,
-            );
-            static_bad_words_mask.unsqueeze(0).totype(Kind::Bool)
+        ) -> Array2<bool> {
+            let mut mask = Array2::<bool>::from_elem((1, scores.ncols()), false);
+            for &token in bad_words_id_length_1 {
+                if (token as usize) < scores.ncols() {
+                    mask[[0, token as usize]] = true;
+                }
+            }
+            mask
         }
 
         fn get_dynamic_bad_word_ids(
@@ -751,45 +860,40 @@ pub(crate) mod private_generation_utils {
         fn ban_bad_words(
             &self,
             dynamic_bad_words: Option<&Vec<&Vec<i64>>>,
-            static_bad_words_mask: Option<&Tensor>,
-            token_ids: &Tensor,
-            scores: &mut Tensor,
+            static_bad_words_mask: Option<&Array2<bool>>,
+            token_ids: &Array2<i64>,
+            scores: &mut Array2<f32>,
         ) {
             let longest_bad_word = dynamic_bad_words
                 .iter()
+                .flat_map(|bad_words| bad_words.iter())
                 .map(|bad_word| bad_word.len())
                 .max()
-                .unwrap() as i64;
+                .unwrap_or(1) as i64;
 
-            let last_token_ids = token_ids.slice(1, -longest_bad_word, None, 1);
             let mut prev_tokens = Vec::new();
-            for sequence_idx in 0..token_ids.size()[0] {
-                prev_tokens.push(
-                    last_token_ids
-                        .get(sequence_idx)
-                        .iter::<i64>()
-                        .unwrap()
-                        .collect::<Vec<i64>>(),
-                )
+            for row in token_ids.rows() {
+                let start = row.len().saturating_sub(longest_bad_word as usize);
+                prev_tokens.push(row.slice(ndarray::s![start..]).to_vec());
             }
 
             let dynamic_bad_words_mask = if let Some(dynamic_bad_words) = dynamic_bad_words {
                 let dynamic_banned_tokens =
                     self.get_dynamic_bad_word_ids(&prev_tokens, dynamic_bad_words);
-                let dynamic_banned_mask =
-                    Tensor::zeros(scores.size().as_slice(), (Kind::Int, scores.device()));
+                let mut mask = Array2::<bool>::from_elem((scores.nrows(), scores.ncols()), false);
                 for (sequence_index, sequence_ban_tokens) in
                     dynamic_banned_tokens.iter().enumerate()
                 {
-                    if !sequence_ban_tokens.is_empty() {
-                        let _ = dynamic_banned_mask.get(sequence_index as i64).index_fill_(
-                            0,
-                            &Tensor::from_slice(sequence_ban_tokens).to_device(scores.device()),
-                            1,
-                        );
+                    if sequence_index >= scores.nrows() {
+                        break;
+                    }
+                    for &token in sequence_ban_tokens {
+                        if (token as usize) < scores.ncols() {
+                            mask[[sequence_index, token as usize]] = true;
+                        }
                     }
                 }
-                Some(dynamic_banned_mask.to_kind(Kind::Bool))
+                Some(mask)
             } else {
                 None
             };
@@ -798,7 +902,7 @@ pub(crate) mod private_generation_utils {
                 if let (Some(static_mask), Some(dynamic_mask)) =
                     (static_bad_words_mask, &dynamic_bad_words_mask)
                 {
-                    Some(static_mask.bitwise_or_tensor(dynamic_mask))
+                    Some(static_mask | dynamic_mask)
                 } else {
                     None
                 }
@@ -815,42 +919,43 @@ pub(crate) mod private_generation_utils {
             };
 
             if let Some(bad_word_mask) = bad_word_mask {
-                let _ = scores.masked_fill_(bad_word_mask, f64::NEG_INFINITY);
+                for (logit, &flag) in scores.iter_mut().zip(bad_word_mask.iter()) {
+                    if flag {
+                        *logit = NEG_INF;
+                    }
+                }
             }
         }
 
         fn generate_no_beam_search(
             &self,
-            input_ids: Tensor,
-            encoder_outputs: Option<Tensor>,
+            input_ids: Array2<i64>,
+            encoder_outputs: Option<ArrayD<f32>>,
             cur_len: i64,
-            batch_size: i64,
-            attention_mask: Tensor,
+            _batch_size: i64,
+            attention_mask: Array2<i64>,
             gen_opt: InternalGenerateOptions,
             prefix_allowed_tokens_fn: Option<PrefixAllowedFunction>,
             output_scores: bool,
         ) -> GeneratedOutputWithScores {
-            let mut unfinished_sentences =
-                Tensor::ones([batch_size], (Kind::Int64, self.get_device()));
-            let mut sentence_lengths: Tensor =
-                Tensor::ones([batch_size], (Kind::Int64, self.get_device()));
+            let mut unfinished_sentences = vec![1i64; input_ids.nrows()];
+            let mut sentence_lengths = vec![1i64; input_ids.nrows()];
             let (bad_word_ids_length_1, bad_word_ids_length_greater_than_1) =
                 self.split_bad_word_ids(gen_opt.bad_word_ids);
-            let mut static_bad_words_mask: Option<Tensor> = None;
-            let mut attention_mask = attention_mask.copy();
-            let mut input_ids = input_ids.copy();
+            let mut static_bad_words_mask: Option<Array2<bool>> = None;
+            let mut attention_mask = attention_mask;
+            let mut input_ids = input_ids;
             let mut past: Cache = Cache::None;
-            let mut outputs: Tensor;
             let mut current_length = cur_len;
-            let mut token_scores_output: Option<Vec<Tensor>> =
+            let mut token_scores_output: Option<Vec<Vec<f64>>> =
                 if output_scores { Some(vec![]) } else { None };
 
             loop {
                 let prepared_input = self.prepare_inputs_for_generation(
-                    input_ids.copy(),
+                    input_ids.clone(),
                     encoder_outputs.as_ref(),
                     past,
-                    attention_mask.copy(),
+                    attention_mask.clone(),
                 );
                 let temp = self
                     .forward_t(
@@ -865,15 +970,16 @@ pub(crate) mod private_generation_utils {
                         false,
                     )
                     .unwrap();
-                outputs = temp.lm_logits;
                 past = temp.cache;
 
-                let mut next_token_logits = outputs.select(1, -1);
+                // Only the last position logits are needed
+                let mut next_token_logits = last_step_logits(&temp.lm_logits);
+
                 // Reduce probability for repeated inputs
                 if gen_opt.repetition_penalty > 1f64 {
                     self.enforce_repetition_penalty(
                         &mut next_token_logits,
-                        batch_size,
+                        input_ids.nrows() as i64,
                         1,
                         &input_ids,
                         gen_opt.repetition_penalty,
@@ -906,15 +1012,12 @@ pub(crate) mod private_generation_utils {
                         gen_opt.no_repeat_ngram_size,
                         current_length,
                     );
-                    for (batch_index, index_banned_token) in
-                        (0..banned_tokens.len() as i64).zip(banned_tokens)
-                    {
-                        let _ = next_token_logits.get(batch_index).index_fill_(
-                            0,
-                            &Tensor::from_slice(&index_banned_token)
-                                .to_device(next_token_logits.device()),
-                            f64::NEG_INFINITY,
-                        );
+                    for (batch_index, index_banned_token) in banned_tokens.into_iter().enumerate() {
+                        for token in index_banned_token {
+                            if (token as usize) < next_token_logits.ncols() {
+                                next_token_logits[[batch_index, token as usize]] = NEG_INF;
+                            }
+                        }
                     }
                 }
 
@@ -930,12 +1033,11 @@ pub(crate) mod private_generation_utils {
 
                 // Do not allow eos token if min length is not reached
                 if (gen_opt.eos_token_ids.is_some()) & (current_length < gen_opt.min_length) {
-                    let _ = next_token_logits.index_fill_(
-                        1,
-                        &Tensor::from_slice(gen_opt.eos_token_ids.as_ref().unwrap())
-                            .to(next_token_logits.device()),
-                        f64::NEG_INFINITY,
-                    );
+                    for &eos_token_id in gen_opt.eos_token_ids.as_ref().unwrap() {
+                        for mut row in next_token_logits.rows_mut().into_iter() {
+                            row[eos_token_id as usize] = NEG_INF;
+                        }
+                    }
                 }
 
                 self.prepare_scores_for_generation(
@@ -946,9 +1048,9 @@ pub(crate) mod private_generation_utils {
                 );
 
                 // Top-k and top-p sampling
-                let next_token = if gen_opt.do_sample {
+                let next_tokens: Vec<i64> = if gen_opt.do_sample {
                     if gen_opt.temperature > 1f64 {
-                        next_token_logits /= gen_opt.temperature;
+                        next_token_logits.mapv_inplace(|value| value / gen_opt.temperature as f32);
                     }
                     self.top_k_top_p_filtering(
                         &mut next_token_logits,
@@ -956,96 +1058,124 @@ pub(crate) mod private_generation_utils {
                         gen_opt.top_p,
                         1,
                     );
-                    let probabilities = next_token_logits.softmax(-1, next_token_logits.kind());
-                    probabilities.multinomial(1, false).squeeze_dim(1)
+                    let probabilities = crate::common::tensor_ops::softmax_last_dim(
+                        &next_token_logits.clone().into_dyn(),
+                    )
+                    .into_dimensionality::<Ix2>()
+                    .unwrap();
+                    probabilities
+                        .rows()
+                        .into_iter()
+                        .map(|row| {
+                            let weights: Vec<f32> = row.iter().copied().collect();
+                            weighted_sample_without_replacement(&weights, 1)[0] as i64
+                        })
+                        .collect()
                 } else {
-                    next_token_logits.argmax(-1, false)
+                    next_token_logits
+                        .rows()
+                        .into_iter()
+                        .map(|row| {
+                            let mut best = 0usize;
+                            let mut best_value = f32::NEG_INFINITY;
+                            for (index, &value) in row.iter().enumerate() {
+                                if value > best_value {
+                                    best_value = value;
+                                    best = index;
+                                }
+                            }
+                            best as i64
+                        })
+                        .collect()
                 };
 
                 if let Some(prev_scores) = token_scores_output.as_mut() {
-                    let finished_mask = unfinished_sentences.eq(0);
-                    prev_scores.push(
-                        next_token_logits
-                            .log_softmax(-1, next_token_logits.kind())
-                            .gather(1, &next_token.reshape([-1, 1]), false)
-                            .squeeze()
-                            .masked_fill(&finished_mask, 0),
-                    );
+                    let log_probs = crate::common::tensor_ops::log_softmax_last_dim(
+                        &next_token_logits.clone().into_dyn(),
+                    )
+                    .into_dimensionality::<Ix2>()
+                    .unwrap();
+                    let step_scores: Vec<f64> = next_tokens
+                        .iter()
+                        .enumerate()
+                        .map(|(row, &token)| {
+                            if unfinished_sentences[row] == 0 {
+                                0f64
+                            } else {
+                                log_probs[[row, token as usize]] as f64
+                            }
+                        })
+                        .collect();
+                    prev_scores.push(step_scores);
                 };
 
                 // Add tokens to unfinished sentences
-                let tokens_to_add = match &gen_opt.eos_token_ids {
-                    Some(_) => {
-                        next_token * &unfinished_sentences
-                            - gen_opt.pad_token_id.unwrap() * (&unfinished_sentences - 1)
-                    }
-                    None => next_token,
+                let tokens_to_add: Vec<i64> = match &gen_opt.eos_token_ids {
+                    Some(_) => next_tokens
+                        .iter()
+                        .zip(unfinished_sentences.iter())
+                        .map(|(&token, &unfinished)| {
+                            token * unfinished - gen_opt.pad_token_id.unwrap() * (unfinished - 1)
+                        })
+                        .collect(),
+                    None => next_tokens,
                 };
 
-                input_ids = Tensor::cat(&[input_ids, tokens_to_add.unsqueeze(-1)], -1);
+                input_ids = append_column(&input_ids, &tokens_to_add);
                 if gen_opt.eos_token_ids.is_some() {
                     for eos_token_id in gen_opt.eos_token_ids.as_ref().unwrap() {
-                        let sentence_with_eos =
-                            tokens_to_add.eq(*eos_token_id).to_kind(Kind::Int64);
-                        let sentence_with_eos: Tensor = sentence_with_eos * &unfinished_sentences;
-                        let _ = sentence_lengths.masked_fill_(
-                            &sentence_with_eos
-                                .to_kind(Kind::Bool)
-                                .to_device(sentence_lengths.device()),
-                            current_length + 1,
-                        );
-                        unfinished_sentences = -unfinished_sentences * (sentence_with_eos - 1);
+                        for row in 0..unfinished_sentences.len() {
+                            let sentence_with_eos = (tokens_to_add[row] == *eos_token_id) as i64
+                                * unfinished_sentences[row];
+                            if sentence_with_eos != 0 {
+                                sentence_lengths[row] = current_length + 1;
+                            }
+                            unfinished_sentences[row] =
+                                -unfinished_sentences[row] * (sentence_with_eos - 1);
+                        }
                     }
-                    if i64::try_from(unfinished_sentences.max()).unwrap() == 0 {
+                    if unfinished_sentences.iter().max().copied().unwrap_or(0) == 0 {
                         break;
                     }
                 }
                 if !self.is_encoder_decoder() {
-                    attention_mask = Tensor::cat(
-                        &[
-                            attention_mask.as_ref(),
-                            Tensor::ones(
-                                [*attention_mask.size().first().unwrap(), 1],
-                                (Kind::Int64, attention_mask.device()),
-                            )
-                            .as_ref(),
-                        ],
-                        -1,
-                    );
+                    let ones_column = vec![1i64; attention_mask.nrows()];
+                    attention_mask = append_column(&attention_mask, &ones_column);
                 }
                 current_length += 1;
                 if let Some(max_length) = gen_opt.max_length {
                     if current_length >= max_length {
-                        let _ = sentence_lengths.masked_fill_(
-                            &unfinished_sentences
-                                .to_kind(Kind::Bool)
-                                .to_device(sentence_lengths.device()),
-                            current_length,
-                        );
+                        for row in 0..sentence_lengths.len() {
+                            if unfinished_sentences[row] != 0 {
+                                sentence_lengths[row] = current_length;
+                            }
+                        }
                         break;
                     }
                 }
             }
-            let scores_output = token_scores_output.as_ref().map(|scores_tensor| {
-                (Tensor::stack(scores_tensor, 1).sum_dim_intlist(
-                    [1].as_slice(),
-                    false,
-                    Kind::Float,
-                ) / sentence_lengths.pow_tensor_scalar(gen_opt.length_penalty))
-                .iter::<f64>()
-                .unwrap()
-                .collect::<Vec<f64>>()
+            let scores_output = token_scores_output.as_ref().map(|scores_steps| {
+                let per_sequence: Vec<f64> = (0..input_ids.nrows())
+                    .map(|row| {
+                        scores_steps
+                            .iter()
+                            .map(|step| step.get(row).copied().unwrap_or(0f64))
+                            .sum::<f64>()
+                    })
+                    .collect();
+                per_sequence
+                    .into_iter()
+                    .zip(sentence_lengths.iter())
+                    .map(|(score, &length)| score / (length as f64).powf(gen_opt.length_penalty))
+                    .collect()
             });
-            let token_scores_output = token_scores_output.map(|score_tensors| {
-                Tensor::stack(&score_tensors, 1)
-                    .split(1, 0)
-                    .iter()
-                    .map(|sequence_scores| {
-                        sequence_scores
-                            .squeeze_dim(0)
-                            .iter::<f64>()
-                            .unwrap()
-                            .collect::<Vec<f64>>()
+            let token_scores_output = token_scores_output.map(|scores_steps| {
+                (0..input_ids.nrows())
+                    .map(|row| {
+                        scores_steps
+                            .iter()
+                            .map(|step| step.get(row).copied().unwrap_or(0f64))
+                            .collect()
                     })
                     .collect()
             });
@@ -1058,21 +1188,21 @@ pub(crate) mod private_generation_utils {
 
         fn generate_beam_search(
             &self,
-            mut input_ids: Tensor,
-            encoder_outputs: Option<Tensor>,
+            mut input_ids: Array2<i64>,
+            mut encoder_outputs: Option<ArrayD<f32>>,
             cur_len: i64,
             batch_size: i64,
-            mut attention_mask: Tensor,
+            mut attention_mask: Array2<i64>,
             gen_opt: InternalGenerateOptions,
             prefix_allowed_tokens_fn: Option<PrefixAllowedFunction>,
             output_scores: bool,
         ) -> GeneratedOutputWithScores {
             let num_beam_groups = gen_opt.num_beam_groups.unwrap_or(1);
             let num_sub_beams = gen_opt.num_beams / num_beam_groups;
-            let diversity_penalty = gen_opt.diversity_penalty.unwrap_or(5.5);
+            let diversity_penalty = gen_opt.diversity_penalty.unwrap_or(5.5) as f32;
             let (bad_word_ids_length_1, bad_word_ids_length_greater_than_1) =
                 self.split_bad_word_ids(gen_opt.bad_word_ids);
-            let mut static_bad_words_mask: Option<Tensor> = None;
+            let mut static_bad_words_mask: Option<Array2<bool>> = None;
 
             let mut hypotheses = (0..batch_size)
                 .map(|_| {
@@ -1086,46 +1216,33 @@ pub(crate) mod private_generation_utils {
                 .collect::<Vec<BeamHypotheses>>();
 
             let vocab_size = self.get_vocab_size();
-            let beam_scores = Tensor::ones(
-                [batch_size, gen_opt.num_beams],
-                (Kind::Float, self.get_device()),
-            ) * -1e9;
-            let _ = beam_scores
-                .slice(1, 0, *beam_scores.size().last().unwrap(), num_sub_beams)
-                .fill_(0);
-
-            let mut beam_scores = beam_scores.view_([-1]);
-            let mut beam_tokens = Tensor::zeros(
-                [batch_size * gen_opt.num_beams],
-                (Kind::Int64, self.get_device()),
-            );
-            let mut beam_indices = Tensor::zeros(
-                [batch_size * gen_opt.num_beams],
-                (Kind::Int64, self.get_device()),
-            );
-            let mut saved_beam_scores: Option<Vec<Tensor>> =
+            // Beam scores: initialized to -1e9 except for the first beam of each group
+            let mut beam_scores: Vec<f32> = vec![-1e9; (batch_size * gen_opt.num_beams) as usize];
+            for beam_index in (0..gen_opt.num_beams).step_by(num_sub_beams as usize) {
+                for batch_index in 0..batch_size {
+                    beam_scores[(batch_index * gen_opt.num_beams + beam_index) as usize] = 0f32;
+                }
+            }
+            let mut beam_tokens: Vec<i64> = vec![0; (batch_size * gen_opt.num_beams) as usize];
+            let mut beam_indices: Vec<i64> = vec![0; (batch_size * gen_opt.num_beams) as usize];
+            let mut saved_beam_scores: Option<Vec<Vec<f32>>> =
                 if output_scores { Some(vec![]) } else { None };
-            let mut current_tokens = Tensor::new();
+            let mut current_tokens: Vec<i64> = vec![0; (batch_size * gen_opt.num_beams) as usize];
 
             let mut past: Cache = Cache::None;
             let mut done = vec![false; batch_size as usize];
 
-            let mut outputs: Tensor;
-            let mut encoder_outputs = encoder_outputs;
             let mut current_length = cur_len;
 
             loop {
                 if num_beam_groups > 1 {
-                    current_tokens = Tensor::zeros(
-                        [batch_size * gen_opt.num_beams],
-                        (input_ids.kind(), input_ids.device()),
-                    );
+                    current_tokens = vec![0; (batch_size * gen_opt.num_beams) as usize];
                 }
                 let prepared_input = self.prepare_inputs_for_generation(
-                    input_ids.copy(),
+                    input_ids.clone(),
                     encoder_outputs.as_ref(),
                     past,
-                    attention_mask.copy(),
+                    attention_mask.clone(),
                 );
                 let temp = self
                     .forward_t(
@@ -1140,7 +1257,7 @@ pub(crate) mod private_generation_utils {
                         false,
                     )
                     .unwrap();
-                outputs = temp.lm_logits;
+                let outputs = last_step_logits(&temp.lm_logits);
                 past = temp.cache;
 
                 for beam_group_index in 0..num_beam_groups {
@@ -1148,32 +1265,35 @@ pub(crate) mod private_generation_utils {
                     let group_end_index = min(group_start_index + num_sub_beams, gen_opt.num_beams);
                     let group_size = group_end_index - group_start_index;
 
-                    let (group_input_ids, batch_group_indices) = if num_beam_groups > 1 {
-                        let mut batch_group_indices: Vec<i64> =
+                    let batch_group_indices: Vec<i64> = if num_beam_groups > 1 {
+                        let mut indices: Vec<i64> =
                             Vec::with_capacity((batch_size * group_size) as usize);
                         for batch_index in 0..batch_size {
-                            batch_group_indices.extend(
+                            indices.extend(
                                 (group_start_index..group_end_index)
                                     .map(|value| value + batch_index * gen_opt.num_beams),
                             )
                         }
-                        let batch_group_indices =
-                            Tensor::from_slice(batch_group_indices.as_slice())
-                                .to(input_ids.device());
-                        (
-                            Some(input_ids.index_select(0, &batch_group_indices)),
-                            Some(batch_group_indices),
-                        )
+                        indices
                     } else {
-                        (None, None)
+                        Vec::new()
+                    };
+
+                    let group_input_ids: Array2<i64> = if num_beam_groups > 1 {
+                        index_select_rows_i64(&input_ids, &batch_group_indices)
+                    } else {
+                        input_ids.clone()
                     };
 
                     let mut next_token_logits = if num_beam_groups <= 1 {
-                        outputs.select(1, -1)
+                        outputs.clone()
                     } else {
-                        outputs
-                            .select(1, -1)
-                            .index_select(0, batch_group_indices.as_ref().unwrap())
+                        crate::common::tensor_ops::gather_rows(
+                            &outputs.clone().into_dyn(),
+                            &batch_group_indices,
+                        )
+                        .into_dimensionality::<Ix2>()
+                        .unwrap()
                     };
                     // Reduce probability for repeated inputs
                     if gen_opt.repetition_penalty > 1f64 {
@@ -1181,13 +1301,13 @@ pub(crate) mod private_generation_utils {
                             &mut next_token_logits,
                             batch_size,
                             1,
-                            group_input_ids.as_ref().unwrap_or(&input_ids),
+                            &group_input_ids,
                             gen_opt.repetition_penalty,
                         )
                     }
 
                     if gen_opt.temperature > 1f64 {
-                        next_token_logits /= gen_opt.temperature;
+                        next_token_logits.mapv_inplace(|value| value / gen_opt.temperature as f32);
                     }
                     self.prepare_scores_for_generation(
                         &mut next_token_logits,
@@ -1196,16 +1316,19 @@ pub(crate) mod private_generation_utils {
                         gen_opt.forced_bos_token_id,
                     );
 
-                    let mut scores = next_token_logits.log_softmax(-1, next_token_logits.kind());
+                    let mut scores = crate::common::tensor_ops::log_softmax_last_dim(
+                        &next_token_logits.clone().into_dyn(),
+                    )
+                    .into_dimensionality::<Ix2>()
+                    .unwrap();
 
                     // Do not allow eos token if min length is not reached
                     if (gen_opt.eos_token_ids.is_some()) & (current_length < gen_opt.min_length) {
-                        let _ = scores.index_fill_(
-                            1,
-                            &Tensor::from_slice(gen_opt.eos_token_ids.as_ref().unwrap())
-                                .to(scores.device()),
-                            f64::NEG_INFINITY,
-                        );
+                        for &eos_token_id in gen_opt.eos_token_ids.as_ref().unwrap() {
+                            for mut row in scores.rows_mut().into_iter() {
+                                row[eos_token_id as usize] = NEG_INF;
+                            }
+                        }
                     }
 
                     // Get bad word_ids and set their probability to 0
@@ -1221,7 +1344,7 @@ pub(crate) mod private_generation_utils {
                         self.ban_bad_words(
                             bad_word_ids_length_greater_than_1.as_ref(),
                             static_bad_words_mask.as_ref(),
-                            group_input_ids.as_ref().unwrap_or(&input_ids),
+                            &group_input_ids,
                             &mut scores,
                         );
                     }
@@ -1229,19 +1352,18 @@ pub(crate) mod private_generation_utils {
                     // Get repeated tokens and set their probability to 0
                     if gen_opt.no_repeat_ngram_size > 0 {
                         let banned_tokens = self.get_banned_tokens(
-                            group_input_ids.as_ref().unwrap_or(&input_ids),
+                            &group_input_ids,
                             gen_opt.no_repeat_ngram_size,
                             current_length,
                         );
                         for (batch_index, index_banned_token) in
-                            (0..banned_tokens.len() as i64).zip(banned_tokens)
+                            banned_tokens.into_iter().enumerate()
                         {
-                            let _ = scores.get(batch_index).index_fill_(
-                                0,
-                                &Tensor::from_slice(&index_banned_token)
-                                    .to_device(next_token_logits.device()),
-                                f64::NEG_INFINITY,
-                            );
+                            for token in index_banned_token {
+                                if (token as usize) < scores.ncols() {
+                                    scores[[batch_index, token as usize]] = NEG_INF;
+                                }
+                            }
                         }
                     }
 
@@ -1249,7 +1371,7 @@ pub(crate) mod private_generation_utils {
                     if num_beam_groups > 1 {
                         self.run_hamming_diversity_penalty(
                             &mut scores,
-                            &current_tokens,
+                            &Array1::from(current_tokens.clone()),
                             diversity_penalty,
                             gen_opt.num_beams,
                             batch_size,
@@ -1268,154 +1390,213 @@ pub(crate) mod private_generation_utils {
                         )
                     }
 
-                    let mut next_scores: Tensor = &scores
-                        + (if num_beam_groups > 1 {
-                            beam_scores
-                                .index_select(0, batch_group_indices.as_ref().unwrap())
-                                .unsqueeze(-1)
-                                .expand_as(&scores)
+                    // Accumulate the running beam score on top of the token scores
+                    let mut next_scores = scores.clone();
+                    for row in 0..next_scores.nrows() {
+                        let beam_score = if num_beam_groups > 1 {
+                            beam_scores[batch_group_indices[row] as usize]
                         } else {
-                            beam_scores.unsqueeze(-1).expand_as(&scores)
-                        });
-
-                    let (next_scores, next_tokens) = if gen_opt.do_sample {
-                        self.top_k_top_p_filtering(
-                            &mut next_scores,
-                            gen_opt.top_k,
-                            gen_opt.top_p,
-                            2,
-                        );
-                        let _scores = next_scores
-                            .contiguous()
-                            .view((batch_size, group_size * vocab_size));
-
-                        let probabilities = _scores.softmax(-1, _scores.kind());
-                        let next_tokens = probabilities.multinomial(2 * group_size, false);
-                        let _scores = _scores.gather(-1, &next_tokens, false);
-                        let (_scores, next_scores_indices) = _scores.sort(1, true);
-                        let next_tokens = next_tokens.gather(-1, &next_scores_indices, false);
-                        (_scores, next_tokens)
-                    } else {
-                        let _scores = next_scores
-                            .contiguous()
-                            .view((batch_size, group_size * vocab_size));
-                        _scores.topk(2 * group_size, 1, true, true)
-                    };
-
-                    let eos_token_ids = gen_opt.eos_token_ids.as_ref();
-                    let beam_ids_tensor = &next_tokens.divide_scalar_mode(vocab_size, "floor");
-                    let effective_beam_ids_tensor =
-                        (&next_tokens.ones_like().cumsum(0, Kind::Int64) - 1) * group_size
-                            + beam_ids_tensor;
-                    let token_id_tensor = &next_tokens - beam_ids_tensor * vocab_size;
-                    let (max_scores, _) = next_scores.max_dim(1, false);
-                    let mut eos_mask = token_id_tensor.ones_like();
-                    if let Some(eos_token_id) = eos_token_ids {
-                        eos_mask -= token_id_tensor.eq(eos_token_id[0]).to_kind(Kind::Int64);
-                    }
-                    let eos_mask2 = eos_mask
-                        .cumsum(1, Kind::Int64)
-                        .le(group_size)
-                        .to_kind(Kind::Bool)
-                        .logical_and(&eos_mask);
-
-                    let group_beam_scores = next_scores.masked_select(&eos_mask2);
-                    let group_beam_tokens = token_id_tensor.masked_select(&eos_mask2);
-                    let group_beam_indices = effective_beam_ids_tensor.masked_select(&eos_mask2);
-                    let eos_pos = (eos_mask.ones_like() - eos_mask).nonzero();
-
-                    for eos_idx in 0..eos_pos.size()[0] {
-                        let eos_data = eos_pos.get(eos_idx);
-                        let batch_index = eos_data.int64_value(&[0]);
-                        if !done[batch_index as usize] {
-                            let beam_index_pos = eos_data.int64_value(&[1]);
-                            let is_beam_token_worse_than_top_num_beams =
-                                beam_index_pos >= gen_opt.num_beams;
-                            if is_beam_token_worse_than_top_num_beams {
-                                continue;
-                            }
-                            let effective_beam_id = effective_beam_ids_tensor
-                                .int64_value(&[batch_index, beam_index_pos]);
-                            let beam_token_score =
-                                next_scores.double_value(&[batch_index, beam_index_pos]);
-                            let saved_beam_scores =
-                                saved_beam_scores.as_ref().map(|step_wise_scores| {
-                                    Tensor::stack(step_wise_scores, 1)
-                                        .get(effective_beam_id)
-                                        .copy()
-                                });
-                            hypotheses[batch_index as usize].add(
-                                input_ids.get(effective_beam_id).copy(),
-                                beam_token_score,
-                                saved_beam_scores,
-                            );
+                            beam_scores[row]
+                        };
+                        for value in next_scores.row_mut(row) {
+                            *value += beam_score;
                         }
                     }
 
-                    for batch_index in 0..batch_size {
-                        if done[batch_index as usize] {
-                            let _ = group_beam_scores
-                                .narrow(0, batch_index * gen_opt.num_beams, gen_opt.num_beams)
-                                .fill_(0f64);
-                            let _ = group_beam_tokens
-                                .narrow(0, batch_index * gen_opt.num_beams, gen_opt.num_beams)
-                                .fill_(gen_opt.pad_token_id.unwrap());
-                            let _ = group_beam_indices
-                                .narrow(0, batch_index * gen_opt.num_beams, gen_opt.num_beams)
-                                .fill_(0);
-                            continue;
+                    // Select the top (2 * group_size) candidates per batch row
+                    let (next_scores_flat, next_tokens_flat): (Vec<Vec<f32>>, Vec<Vec<i64>>) =
+                        if gen_opt.do_sample {
+                            self.top_k_top_p_filtering(
+                                &mut next_scores,
+                                gen_opt.top_k,
+                                gen_opt.top_p,
+                                2,
+                            );
+                            let flattened: Vec<f32> = next_scores.iter().copied().collect();
+                            let mut sampled_tokens_rows = Vec::with_capacity(next_scores.nrows());
+                            let mut sampled_scores_rows = Vec::with_capacity(next_scores.nrows());
+                            for row in 0..next_scores.nrows() {
+                                let row_probs = {
+                                    let row_values = &flattened[row * next_scores.ncols()
+                                        ..(row + 1) * next_scores.ncols()];
+                                    crate::common::tensor_ops::softmax_last_dim(
+                                        &ndarray::Array1::from(row_values.to_vec()).into_dyn(),
+                                    )
+                                    .into_dimensionality::<Ix1>()
+                                    .unwrap()
+                                };
+                                let probs: Vec<f32> = row_probs.iter().copied().collect();
+                                let mut sampled = weighted_sample_without_replacement(
+                                    &probs,
+                                    2 * group_size as usize,
+                                );
+                                sampled.sort_unstable();
+                                let tokens: Vec<i64> =
+                                    sampled.iter().map(|&index| index as i64).collect();
+                                let values: Vec<f32> = sampled
+                                    .iter()
+                                    .map(|&index| flattened[row * next_scores.ncols() + index])
+                                    .collect();
+                                sampled_tokens_rows.push(tokens);
+                                sampled_scores_rows.push(values);
+                            }
+                            (sampled_scores_rows, sampled_tokens_rows)
                         } else {
-                            done[batch_index as usize] |= hypotheses[batch_index as usize]
-                                .is_done(max_scores.double_value(&[batch_index]), current_length);
+                            let flattened: Vec<f32> = next_scores.iter().copied().collect();
+                            let mut top_tokens_rows = Vec::with_capacity(next_scores.nrows());
+                            let mut top_scores_rows = Vec::with_capacity(next_scores.nrows());
+                            for row in 0..next_scores.nrows() {
+                                let row_values = &flattened
+                                    [row * next_scores.ncols()..(row + 1) * next_scores.ncols()];
+                                let (values, indices) = crate::common::tensor_ops::topk_last_dim(
+                                    &ndarray::Array1::from(row_values.to_vec()).into_dyn(),
+                                    2 * group_size as usize,
+                                );
+                                top_scores_rows.push(
+                                    values
+                                        .into_dimensionality::<Ix1>()
+                                        .unwrap()
+                                        .iter()
+                                        .copied()
+                                        .collect(),
+                                );
+                                top_tokens_rows.push(
+                                    indices
+                                        .into_dimensionality::<Ix1>()
+                                        .unwrap()
+                                        .iter()
+                                        .map(|&index| index)
+                                        .collect(),
+                                );
+                            }
+                            (top_scores_rows, top_tokens_rows)
+                        };
+
+                    // Beam bookkeeping (eos handling follows the reference implementation)
+                    let eos_token_ids = gen_opt.eos_token_ids.as_ref();
+                    let mut group_beam_scores: Vec<f32> = Vec::new();
+                    let mut group_beam_tokens: Vec<i64> = Vec::new();
+                    let mut group_beam_indices: Vec<i64> = Vec::new();
+                    for batch_index in 0..batch_size as usize {
+                        let row_tokens = &next_tokens_flat[batch_index];
+                        let row_scores = &next_scores_flat[batch_index];
+                        // effective beam id of each candidate
+                        let effective_beam_ids: Vec<i64> = row_tokens
+                            .iter()
+                            .map(|&token| {
+                                let beam_id = token / vocab_size;
+                                batch_index as i64 * group_size + beam_id
+                            })
+                            .collect();
+                        let token_ids: Vec<i64> = row_tokens
+                            .iter()
+                            .map(|&token| token - (token / vocab_size) * vocab_size)
+                            .collect();
+                        let max_score =
+                            row_scores.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+
+                        // eos mask: 1 unless the candidate is the (first) eos token
+                        let eos_mask: Vec<i64> = match eos_token_ids {
+                            Some(ids) => token_ids
+                                .iter()
+                                .map(|&token| 1 - (token == ids[0]) as i64)
+                                .collect(),
+                            None => vec![1; row_tokens.len()],
+                        };
+                        // active candidates: the first group_size candidates that are not eos
+                        let mut cumulative = 0i64;
+                        let is_active: Vec<bool> = eos_mask
+                            .iter()
+                            .map(|&flag| {
+                                cumulative += flag;
+                                (cumulative <= group_size) && flag != 0
+                            })
+                            .collect();
+
+                        for (candidate_index, &active) in is_active.iter().enumerate() {
+                            if active {
+                                group_beam_scores.push(row_scores[candidate_index]);
+                                group_beam_tokens.push(token_ids[candidate_index]);
+                                group_beam_indices.push(effective_beam_ids[candidate_index]);
+                            }
+                        }
+
+                        // completed hypotheses: candidates where eos_mask == 0
+                        for (candidate_index, &flag) in eos_mask.iter().enumerate() {
+                            if flag != 0 {
+                                continue;
+                            }
+                            if !done[batch_index] {
+                                let beam_index_pos = candidate_index as i64;
+                                let is_beam_token_worse_than_top_num_beams =
+                                    beam_index_pos >= gen_opt.num_beams;
+                                if is_beam_token_worse_than_top_num_beams {
+                                    continue;
+                                }
+                                let effective_beam_id =
+                                    effective_beam_ids[candidate_index] as usize;
+                                let beam_token_score = row_scores[candidate_index] as f64;
+                                let saved_step_scores =
+                                    saved_beam_scores.as_ref().map(|step_wise_scores| {
+                                        step_wise_scores
+                                            .iter()
+                                            .map(|step| {
+                                                step.get(effective_beam_id).copied().unwrap_or(0f32)
+                                                    as f64
+                                            })
+                                            .collect::<Vec<f64>>()
+                                    });
+                                hypotheses[batch_index].add(
+                                    input_ids
+                                        .row(min(effective_beam_id, input_ids.nrows() - 1))
+                                        .to_vec(),
+                                    beam_token_score,
+                                    saved_step_scores,
+                                );
+                            }
+                        }
+
+                        if done[batch_index] {
+                            for _ in 0..gen_opt.num_beams {
+                                group_beam_scores.push(0f32);
+                                group_beam_tokens.push(gen_opt.pad_token_id.unwrap());
+                                group_beam_indices.push(0);
+                            }
+                        } else {
+                            done[batch_index] |=
+                                hypotheses[batch_index].is_done(max_score as f64, current_length);
                         }
                     }
 
                     if num_beam_groups <= 1 {
-                        beam_scores = group_beam_scores.view(-1);
-                        beam_tokens = group_beam_tokens.view(-1);
-                        beam_indices = group_beam_indices.view(-1);
+                        beam_scores = group_beam_scores;
+                        beam_tokens = group_beam_tokens;
+                        beam_indices = group_beam_indices;
                     } else {
-                        let _ = beam_scores.index_copy_(
-                            0,
-                            batch_group_indices.as_ref().unwrap(),
-                            &group_beam_scores,
-                        );
-                        let _ = beam_tokens.index_copy_(
-                            0,
-                            batch_group_indices.as_ref().unwrap(),
-                            &group_beam_tokens,
-                        );
-                        let new_indices = gen_opt.num_beams
-                            * group_beam_indices.divide_scalar_mode(group_size, "floor")
-                            + group_start_index
-                            + group_beam_indices.remainder(group_size);
-                        let _ = beam_indices.index_copy_(
-                            0,
-                            batch_group_indices.as_ref().unwrap(),
-                            &new_indices,
-                        );
-                        let _ = current_tokens.index_copy_(
-                            0,
-                            batch_group_indices.as_ref().unwrap(),
-                            &group_beam_tokens,
-                        );
+                        for (position, &batch_beam_index) in batch_group_indices.iter().enumerate()
+                        {
+                            let index = batch_beam_index as usize;
+                            beam_scores[index] = group_beam_scores[position];
+                            beam_tokens[index] = group_beam_tokens[position];
+                            let new_index = gen_opt.num_beams
+                                * (group_beam_indices[position] / group_size)
+                                + group_start_index
+                                + (group_beam_indices[position] % group_size);
+                            beam_indices[index] = new_index;
+                            current_tokens[index] = group_beam_tokens[position];
+                        }
                     }
                 }
 
                 if let Some(scores_output) = saved_beam_scores.as_mut() {
-                    scores_output.push(beam_scores.copy());
+                    scores_output.push(beam_scores.clone());
                 }
                 if done.iter().all(|&x| x) {
                     break;
                 }
 
-                input_ids = Tensor::cat(
-                    &[
-                        input_ids.index_select(0, &beam_indices),
-                        beam_tokens.unsqueeze(1),
-                    ],
-                    -1,
-                );
+                input_ids = index_select_rows_i64(&input_ids, &beam_indices);
+                input_ids = append_column(&input_ids, &beam_tokens);
 
                 current_length += 1;
                 if let Some(max_length) = gen_opt.max_length {
@@ -1426,24 +1607,24 @@ pub(crate) mod private_generation_utils {
                 encoder_outputs = self.reorder_cache(&mut past, encoder_outputs, &beam_indices);
 
                 if !self.is_encoder_decoder() {
-                    attention_mask = Tensor::cat(
-                        &[
-                            attention_mask.as_ref(),
-                            Tensor::ones(
-                                [*attention_mask.size().first().unwrap(), 1],
-                                (Kind::Int64, attention_mask.device()),
-                            )
-                            .as_ref(),
-                        ],
-                        -1,
-                    );
+                    let ones_column = vec![1i64; attention_mask.nrows()];
+                    attention_mask = append_column(&attention_mask, &ones_column);
                 }
             }
 
             let mut batch_index = 0i64;
 
-            let mut saved_beam_scores = saved_beam_scores
-                .map(|step_wise_scores| Tensor::stack(&step_wise_scores, 1).split(1, 0));
+            let mut saved_beam_scores = saved_beam_scores.map(|step_wise_scores| {
+                // transpose to per-beam token score sequences
+                (0..step_wise_scores.first().map(|step| step.len()).unwrap_or(0))
+                    .map(|beam| {
+                        step_wise_scores
+                            .iter()
+                            .map(|step| step.get(beam).copied().unwrap_or(0f32))
+                            .collect::<Vec<f32>>()
+                    })
+                    .collect::<Vec<Vec<f32>>>()
+            });
             loop {
                 if batch_index == batch_size {
                     break;
@@ -1455,10 +1636,13 @@ pub(crate) mod private_generation_utils {
                 for beam_index in 0..gen_opt.num_beams {
                     let effective_beam_id = batch_index * gen_opt.num_beams + beam_index;
                     let beam_saved_token_scores = saved_beam_scores.as_mut().map(|saved_tokens| {
-                        mem::replace(&mut saved_tokens[effective_beam_id as usize], Tensor::new())
+                        saved_tokens[effective_beam_id as usize]
+                            .iter()
+                            .map(|&value| value as f64)
+                            .collect::<Vec<f64>>()
                     });
-                    let final_score = f64::try_from(beam_scores.get(effective_beam_id)).unwrap();
-                    let final_tokens = input_ids.get(effective_beam_id);
+                    let final_score = beam_scores[effective_beam_id as usize] as f64;
+                    let final_tokens = input_ids.row(effective_beam_id as usize).to_vec();
                     hypotheses[batch_index as usize].add(
                         final_tokens,
                         final_score,
@@ -1476,10 +1660,8 @@ pub(crate) mod private_generation_utils {
                 )
             };
 
-            let mut sentence_lengths =
-                Tensor::zeros([output_batch_size], (Kind::Int64, input_ids.device()));
-            let mut best_ids = vec![];
-
+            let mut sentence_lengths: Vec<i64> = vec![0; output_batch_size as usize];
+            let mut best_ids: Vec<Vec<i64>> = Vec::new();
             let mut scores_output = if output_scores {
                 Some(Vec::with_capacity(best_ids.len()))
             } else {
@@ -1501,70 +1683,39 @@ pub(crate) mod private_generation_utils {
 
                     let (best_score, best_hyp, best_token_scores) =
                         sorted_hypotheses.beams.pop().unwrap();
-                    let _ = sentence_lengths.index_fill_(
-                        0,
-                        &Tensor::from_slice(&[effective_batch_index]).to(sentence_lengths.device()),
-                        *best_hyp.size().first().unwrap(),
-                    );
+                    sentence_lengths[effective_batch_index as usize] = best_hyp.len() as i64;
                     best_ids.push(best_hyp);
                     if let Some(current_best_scores) = &mut scores_output {
                         current_best_scores.push(best_score);
                     }
                     if let Some(current_best_token_scores) = &mut token_scores_output {
-                        current_best_token_scores.push(
-                            best_token_scores
-                                .unwrap()
-                                .iter::<f64>()
-                                .unwrap()
-                                .collect::<Vec<f64>>(),
-                        );
+                        current_best_token_scores.push(best_token_scores.unwrap_or_default());
                     }
                 }
             }
+            let max_sentence_length = sentence_lengths.iter().max().copied().unwrap_or(0);
             let sentence_max_length = gen_opt
                 .max_length
-                .map(|max_length| {
-                    min(
-                        i64::try_from(sentence_lengths.max()).unwrap() + 1,
-                        max_length,
-                    )
-                })
-                .unwrap_or(i64::try_from(sentence_lengths.max()).unwrap() + 1);
+                .map(|max_length| min(max_sentence_length + 1, max_length))
+                .unwrap_or(max_sentence_length + 1);
 
-            let mut decoded = input_ids.new_empty(
-                [output_batch_size, sentence_max_length],
-                (Kind::Int64, input_ids.device()),
+            let mut decoded = ndarray::Array2::<i64>::from_elem(
+                (output_batch_size as usize, sentence_max_length as usize),
+                gen_opt
+                    .pad_token_id
+                    .unwrap_or_else(|| gen_opt.eos_token_ids.as_ref().unwrap()[0]),
             );
-            if i64::try_from(sentence_lengths.max()).unwrap()
-                != i64::try_from(sentence_lengths.min()).unwrap()
-            {
-                let _ = decoded.fill_(
-                    gen_opt
-                        .pad_token_id
-                        .unwrap_or_else(|| gen_opt.eos_token_ids.as_ref().unwrap()[0]),
-                );
-            }
             for (hypothesis_index, best_id) in best_ids.iter().enumerate() {
-                let _ = decoded.get(hypothesis_index as i64).index_copy_(
-                    0,
-                    &Tensor::arange_start(
-                        0,
-                        i64::try_from(sentence_lengths.get(hypothesis_index as i64)).unwrap(),
-                        (Kind::Int64, input_ids.device()),
-                    ),
-                    best_id,
-                );
-                let sentence_length =
-                    i64::try_from(sentence_lengths.get(hypothesis_index as i64)).unwrap();
-                let sentence_length_max = gen_opt
-                    .max_length
-                    .unwrap_or_else(|| i64::try_from(sentence_lengths.max()).unwrap());
-                if sentence_length < sentence_length_max {
-                    let _ = decoded.get(hypothesis_index as i64).index_fill_(
-                        0,
-                        &Tensor::from_slice(&[sentence_length]).to_device(input_ids.device()),
-                        gen_opt.eos_token_ids.as_ref().unwrap()[0],
-                    );
+                let sentence_length = sentence_lengths[hypothesis_index] as usize;
+                for (position, &token) in best_id.iter().take(sentence_length).enumerate() {
+                    decoded[[hypothesis_index, position]] = token;
+                }
+                let sentence_length_max = gen_opt.max_length.unwrap_or(max_sentence_length);
+                if (sentence_length as i64) < sentence_length_max
+                    && sentence_length < decoded.ncols()
+                {
+                    decoded[[hypothesis_index, sentence_length]] =
+                        gen_opt.eos_token_ids.as_ref().unwrap()[0];
                 }
             }
             GeneratedOutputWithScores {
@@ -1577,9 +1728,9 @@ pub(crate) mod private_generation_utils {
         fn reorder_cache(
             &self,
             past: &mut Cache,
-            _encoder_outputs: Option<Tensor>,
-            _beam_indices: &Tensor,
-        ) -> Option<Tensor> {
+            _encoder_outputs: Option<ArrayD<f32>>,
+            _beam_indices: &[i64],
+        ) -> Option<ArrayD<f32>> {
             match past {
                 Cache::None => None,
                 _ => {
@@ -1589,16 +1740,40 @@ pub(crate) mod private_generation_utils {
         }
     }
 
-    pub fn force_token_id_generation(scores: &mut Tensor, token_ids: &[i64], vocab_size: i64) {
+    fn get_positive_infinity_f32() -> f32 {
+        f32::INFINITY
+    }
+
+    /// Extracts the logits of the last sequence position, whatever the rank of the model output.
+    fn last_step_logits(logits: &ArrayD<f32>) -> Array2<f32> {
+        match logits.ndim() {
+            2 => logits.clone().into_dimensionality::<Ix2>().unwrap(),
+            3 => {
+                let batch = logits.shape()[0];
+                let seq = logits.shape()[1];
+                let vocab = logits.shape()[2];
+                let view = logits.view();
+                let mut selected = ndarray::Array2::<f32>::zeros((batch, vocab));
+                for row in 0..batch {
+                    for col in 0..vocab {
+                        selected[[row, col]] = view[[row, seq - 1, col]];
+                    }
+                }
+                selected
+            }
+            rank => panic!("Unexpected logits rank"),
+        }
+    }
+
+    pub fn force_token_id_generation(scores: &mut Array2<f32>, token_ids: &[i64], vocab_size: i64) {
         let impossible_tokens: Vec<i64> = (0..vocab_size)
             .filter(|pos| !token_ids.contains(pos))
             .collect();
-        let impossible_tokens = Tensor::from_slice(&impossible_tokens).to_device(scores.device());
-        let _ = scores.index_fill_(
-            1,
-            &impossible_tokens,
-            get_negative_infinity(scores.kind()).unwrap(),
-        );
+        for mut row in scores.rows_mut().into_iter() {
+            for token in &impossible_tokens {
+                row[*token as usize] = f32::NEG_INFINITY;
+            }
+        }
     }
 }
 
@@ -1619,9 +1794,9 @@ pub struct GeneratedIndicesOutput {
     pub token_scores: Option<Vec<f64>>,
 }
 
-pub type PrefixAllowedFunction<'a> = &'a dyn Fn(i64, &Tensor) -> Vec<i64>;
+pub type PrefixAllowedFunction<'a> = &'a dyn Fn(i64, &[i64]) -> Vec<i64>;
 /// Type alias for a function defining allowed tokens based on current tokens generated.
-/// This function should take a `batch_id` and associated tensor of already generated tokens and
+/// This function should take a `batch_id` and associated slice of already generated tokens and
 /// should return a vector of allowed tokens. This is useful for controlled generation, i.e.
 /// deterministic generation of a token continuation if a sequence of token occurs.
 
@@ -1666,7 +1841,7 @@ pub struct GenerateOptions<'a> {
     pub decoder_start_token_id: Option<i64>,
     /// Forced first token generated
     pub forced_bos_token_id: Option<i64>,
-    /// Function to control the generation process. The function should take a `batch_id` (i64) and a tensor of token_ids already generated and returns a `Vec<i64>` of allowed tokens.
+    /// Function to control the generation process. The function should take a `batch_id` (i64) and a slice of token_ids already generated and returns a `Vec<i64>` of allowed tokens.
     pub prefix_allowed_tokens_fn: Option<PrefixAllowedFunction<'a>>,
     /// List of bad word ids (may be a sequence of word ids) that will be banned during the generation
     pub bad_word_ids: Option<&'a Vec<Vec<i64>>>,
@@ -1694,83 +1869,6 @@ pub trait LanguageGenerator: PrivateLanguageGenerator {
     ///
     /// # Returns
     /// * `Vec<TextOutput>` Vector of length *number_of_prompts* x *num_return_sequences* containing TextOutput with the generated texts and the generation score if `output_scores` is true.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// # use std::path::PathBuf;
-    /// # use tch::Device;
-    /// # fn main() -> anyhow::Result<()> {
-    /// use rust_bert::gpt2::GPT2Generator;
-    /// use rust_bert::pipelines::generation_utils::{
-    ///  GenerateConfig, GenerateOptions, LanguageGenerator,
-    /// };
-    /// use tch::Tensor;
-    /// # let mut home: PathBuf = dirs::home_dir().unwrap();
-    /// # home.push("rustbert");
-    /// # home.push("gpt2");
-    /// # let config_path = &home.as_path().join("config.json");
-    /// # let vocab_path = &home.as_path().join("vocab.txt");
-    /// # let merges_path = &home.as_path().join("merges.txt");
-    /// # let weights_path = &home.as_path().join("model.ot");
-    /// let device = Device::cuda_if_available();
-    /// let generate_config = GenerateConfig {
-    ///  max_length: Some(30),
-    ///  do_sample: true,
-    ///  num_beams: 5,
-    ///  temperature: 1.1,
-    ///  num_return_sequences: 3,
-    ///  ..Default::default()
-    /// };
-    /// let gpt2_generator = GPT2Generator::new(generate_config)?;
-    /// let input_context = "The dog";
-    /// let second_input_context = "The cat was";
-    ///
-    /// //Example custom function for fine-grained generation control
-    /// fn force_one_paragraph(_batch_id: i64, previous_token_ids: &Tensor) -> Vec<i64> {
-    ///  let paragraph_tokens = [198, 628];
-    ///
-    ///  for paragraph_token in paragraph_tokens.iter() {
-    ///      if previous_token_ids
-    ///          .iter::<i64>()
-    ///          .unwrap()
-    ///          .collect::<Vec<i64>>()
-    ///          .contains(paragraph_token)
-    ///      {
-    ///          return vec![50256];
-    ///      }
-    ///  }
-    ///  (0..50255).collect()
-    /// }
-    ///
-    /// let generate_options = GenerateOptions {
-    ///  min_length: Some(32),
-    ///  max_length: Some(128),
-    ///  output_scores: true,
-    ///  prefix_allowed_tokens_fn: Some(&force_one_paragraph),
-    ///  ..Default::default()
-    /// };
-    ///
-    /// let output = gpt2_generator.generate(
-    ///  Some(&[input_context, second_input_context]),
-    ///  Some(generate_options),
-    /// );
-    /// # Ok(())
-    /// # }
-    /// ```
-    /// Example output: \
-    /// ```no_run
-    /// # let output =
-    /// [
-    ///  "The dog's owners, however, did not want to be named. According to the lawsuit, the animal's owner, a 29-year",
-    ///  "The dog has always been part of the family. \"He was always going to be my dog and he was always looking out for me",
-    ///  "The dog has been able to stay in the home for more than three months now. \"It's a very good dog. She's",
-    ///  "The cat was discovered earlier this month in the home of a relative of the deceased. The cat\'s owner, who wished to remain anonymous,",
-    ///  "The cat was pulled from the street by two-year-old Jazmine.\"I didn't know what to do,\" she said",
-    ///  "The cat was attacked by two stray dogs and was taken to a hospital. Two other cats were also injured in the attack and are being treated."
-    /// ]
-    /// # ;
-    /// ```
     fn generate<S>(
         &self,
         prompt_texts: Option<&[S]>,
@@ -1801,70 +1899,6 @@ pub trait LanguageGenerator: PrivateLanguageGenerator {
     ///
     /// # Returns
     /// * `Vec<IndicesOutput>` Vector of length *number_of_prompts* x *num_return_sequences* containing IndicesOutput with the generated indices and the generation score if `output_scores` is true.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// # use std::path::PathBuf;
-    /// # use tch::Device;
-    /// # fn main() -> anyhow::Result<()> {
-    /// use rust_bert::gpt2::GPT2Generator;
-    /// use rust_bert::pipelines::generation_utils::{
-    ///  GenerateConfig, GenerateOptions, LanguageGenerator,
-    /// };
-    /// use tch::Tensor;
-    /// # let mut home: PathBuf = dirs::home_dir().unwrap();
-    /// # home.push("rustbert");
-    /// # home.push("gpt2");
-    /// # let config_path = &home.as_path().join("config.json");
-    /// # let vocab_path = &home.as_path().join("vocab.txt");
-    /// # let merges_path = &home.as_path().join("merges.txt");
-    /// # let weights_path = &home.as_path().join("model.ot");
-    /// let device = Device::cuda_if_available();
-    /// let generate_config = GenerateConfig {
-    ///  max_length: Some(30),
-    ///  do_sample: true,
-    ///  num_beams: 5,
-    ///  temperature: 1.1,
-    ///  num_return_sequences: 3,
-    ///  ..Default::default()
-    /// };
-    /// let gpt2_generator = GPT2Generator::new(generate_config)?;
-    /// let input_context = "The dog";
-    /// let second_input_context = "The cat was";
-    ///
-    /// //Example custom function for fine-grained generation control
-    /// fn force_one_paragraph(_batch_id: i64, previous_token_ids: &Tensor) -> Vec<i64> {
-    ///  let paragraph_tokens = [198, 628];
-    ///
-    ///  for paragraph_token in paragraph_tokens.iter() {
-    ///      if previous_token_ids
-    ///          .iter::<i64>()
-    ///          .unwrap()
-    ///          .collect::<Vec<i64>>()
-    ///          .contains(paragraph_token)
-    ///      {
-    ///          return vec![50256];
-    ///      }
-    ///  }
-    ///  (0..50255).collect()
-    /// }
-    ///
-    /// let generate_options = GenerateOptions {
-    ///  min_length: Some(32),
-    ///  max_length: Some(128),
-    ///  output_scores: true,
-    ///  prefix_allowed_tokens_fn: Some(&force_one_paragraph),
-    ///  ..Default::default()
-    /// };
-    ///
-    /// let output = gpt2_generator.generate_indices(
-    ///  Some(&[input_context, second_input_context]),
-    ///  Some(generate_options),
-    /// );
-    /// # Ok(())
-    /// # }
-    /// ```
     fn generate_indices<S>(
         &self,
         prompt_texts: Option<&[S]>,
@@ -1895,7 +1929,7 @@ pub trait LanguageGenerator: PrivateLanguageGenerator {
                 self.encode_prompt_text(prompts, encoding_max_len, pad_token_id)
             }
             None => match self.get_bos_id() {
-                Some(bos_id) => Tensor::ones([1, 1], (Int64, self.get_device())) * bos_id,
+                Some(bos_id) => ndarray::Array2::from_elem((1, 1), bos_id),
                 None => return Err(RustBertError::ValueError(
                     "A model with a BOS token must be used to start generation with an empty input"
                         .to_string(),
@@ -1911,55 +1945,15 @@ pub trait LanguageGenerator: PrivateLanguageGenerator {
     ///
     /// # Arguments
     ///
-    /// * `input_ids` - `Tensor` pre-tokenized and encoded input for generation.
+    /// * `input_ids` - `Array2<i64>` pre-tokenized and encoded input for generation (shape *batch size* x *sequence length*).
     /// * `generate_options` - `Option<GenerateOptions>` Optional set of generate options. If not (or partially) provided, will use the settings provided when creating the generator
     ///
     /// # Returns
     /// * `Vec<IndicesOutput>` Vector of length *number_of_prompts* x *num_return_sequences* containing IndicesOutput with the generated indices and the generation score if `output_scores` is true.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// # use std::path::PathBuf;
-    /// # use tch::Device;
-    /// # fn main() -> anyhow::Result<()> {
-    /// use rust_bert::gpt2::GPT2Generator;
-    /// use rust_bert::pipelines::generation_utils::{
-    ///  GenerateConfig, GenerateOptions, LanguageGenerator,
-    /// };
-    /// use tch::{Kind, Tensor};
-    /// # let mut home: PathBuf = dirs::home_dir().unwrap();
-    /// # home.push("rustbert");
-    /// # home.push("gpt2");
-    /// # let config_path = &home.as_path().join("config.json");
-    /// # let vocab_path = &home.as_path().join("vocab.txt");
-    /// # let merges_path = &home.as_path().join("merges.txt");
-    /// # let weights_path = &home.as_path().join("model.ot");
-    /// let device = Device::cuda_if_available();
-    ///
-    /// let gpt2_generator = GPT2Generator::new(Default::default())?;
-    /// let input_tensor = Tensor::randn(&[32, 128], (Kind::Int64, Device::Cpu));
-    /// let input_mask = Tensor::ones(&[32, 128], (Kind::Int64, Device::Cpu));
-    ///
-    /// let generate_options = GenerateOptions {
-    ///  min_length: Some(32),
-    ///  max_length: Some(128),
-    ///  output_scores: true,
-    ///  ..Default::default()
-    /// };
-    ///
-    /// let output = gpt2_generator.generate_from_ids_and_past(
-    ///  input_tensor,
-    ///  Some(input_mask),
-    ///  Some(generate_options),
-    /// );
-    /// # Ok(())
-    /// # }
-    /// ```
     fn generate_from_ids_and_past(
         &self,
-        mut input_ids: Tensor,
-        mut attention_mask: Option<Tensor>,
+        mut input_ids: ndarray::Array2<i64>,
+        mut attention_mask: Option<ndarray::Array2<i64>>,
         generate_options: Option<GenerateOptions>,
     ) -> Result<Vec<GeneratedIndicesOutput>, RustBertError> {
         let eos_token_ids = PrivateLanguageGenerator::get_eos_ids(self).cloned();
@@ -1997,28 +1991,23 @@ pub trait LanguageGenerator: PrivateLanguageGenerator {
             None => eos_token_ids.as_ref().map(|eos_ids| eos_ids[0]),
         };
 
-        let input_id_size = input_ids.size();
-        let mut input_ids_len = *input_id_size.last().unwrap();
+        let mut input_ids_len = input_ids.ncols() as i64;
         if input_ids_len == 0 {
-            input_ids = Tensor::ones(
-                [*input_id_size.first().unwrap(), 1],
-                (Int64, input_ids.device()),
-            ) * self
-                .get_bos_id()
-                .expect("`bos_token_id` has to be defined when no `input_ids` are provided.");
-            attention_mask = Some(Tensor::ones(
-                [*input_id_size.first().unwrap(), 1],
-                (Int64, input_ids.device()),
-            ));
+            input_ids = ndarray::Array2::from_elem(
+                (input_ids.nrows(), 1),
+                self.get_bos_id()
+                    .expect("`bos_token_id` has to be defined when no `input_ids` are provided."),
+            );
+            attention_mask = Some(ndarray::Array2::ones((input_ids.nrows(), 1)));
             input_ids_len += 1;
         }
 
         let cur_len = if !self.is_encoder_decoder() {
-            *input_ids.size().last().unwrap()
+            input_ids.ncols() as i64
         } else {
             1
         };
-        let batch_size = *input_ids.size().first().unwrap();
+        let batch_size = input_ids.nrows() as i64;
 
         let (effective_batch_size, effective_batch_mult) = match do_sample {
             true => (batch_size * num_return_sequences, num_return_sequences),
@@ -2028,8 +2017,8 @@ pub trait LanguageGenerator: PrivateLanguageGenerator {
         let attention_mask = match attention_mask {
             Some(value) => value,
             None => match pad_token_id {
-                Some(pad_id) => input_ids.ne(pad_id).to_kind(Int64),
-                None => input_ids.ones_like().to_kind(Int64),
+                Some(pad_id) => input_ids.mapv(|value| (value != pad_id) as i64),
+                None => input_ids.mapv(|_| 1),
             },
         };
 
@@ -2037,35 +2026,38 @@ pub trait LanguageGenerator: PrivateLanguageGenerator {
             let encoder_outputs = self
                 .encode(&input_ids, Some(&attention_mask))
                 .ok_or(RustBertError::UnsupportedError)?;
-            let expanded_batch_indices = Tensor::arange(batch_size, (Int64, input_ids.device()))
-                .view((-1, 1))
-                .repeat([1, num_beams * effective_batch_mult])
-                .view(-1);
-            Some(encoder_outputs.index_select(0, &expanded_batch_indices))
+            let mut expanded_batch_indices: Vec<i64> = Vec::new();
+            for batch_index in 0..batch_size {
+                for _ in 0..(num_beams * effective_batch_mult) {
+                    expanded_batch_indices.push(batch_index);
+                }
+            }
+            Some(crate::common::tensor_ops::gather_rows(
+                &encoder_outputs,
+                &expanded_batch_indices,
+            ))
         } else {
             None
         };
 
         let (input_ids, attention_mask) = if !self.is_encoder_decoder() {
             if (num_return_sequences > 1) | (num_beams > 1) {
-                (
-                    input_ids
-                        .unsqueeze(1)
-                        .expand(
-                            [batch_size, effective_batch_mult * num_beams, cur_len],
-                            true,
-                        )
-                        .contiguous()
-                        .view((effective_batch_size * num_beams, cur_len)),
-                    attention_mask
-                        .unsqueeze(1)
-                        .expand(
-                            [batch_size, effective_batch_mult * num_beams, cur_len],
-                            true,
-                        )
-                        .contiguous()
-                        .view((effective_batch_size * num_beams, cur_len)),
-                )
+                let total_rows = (effective_batch_size * num_beams) as usize;
+                let mut expanded_ids =
+                    ndarray::Array2::<i64>::zeros((total_rows, cur_len as usize));
+                let mut expanded_mask =
+                    ndarray::Array2::<i64>::zeros((total_rows, cur_len as usize));
+                let mut row = 0usize;
+                for _ in 0..total_rows {
+                    expanded_ids
+                        .row_mut(row)
+                        .assign(&input_ids.row(row % batch_size as usize));
+                    expanded_mask
+                        .row_mut(row)
+                        .assign(&attention_mask.row(row % batch_size as usize));
+                    row += 1;
+                }
+                (expanded_ids, expanded_mask)
             } else {
                 (input_ids, attention_mask)
             }
@@ -2075,20 +2067,20 @@ pub trait LanguageGenerator: PrivateLanguageGenerator {
                 .ok_or(RustBertError::ValueError(
                     "decoder start id must be specified for encoder decoders".to_string(),
                 ))?;
-            let input_ids = Tensor::full(
-                [effective_batch_size * num_beams, 1],
+            let input_ids = ndarray::Array2::from_elem(
+                ((effective_batch_size * num_beams) as usize, 1),
                 decoder_start_token_id,
-                (Int64, input_ids.device()),
             );
             let attention_mask = if (num_return_sequences > 1) | (num_beams > 1) {
-                attention_mask
-                    .unsqueeze(1)
-                    .expand(
-                        [batch_size, effective_batch_mult * num_beams, input_ids_len],
-                        true,
-                    )
-                    .contiguous()
-                    .view((effective_batch_size * num_beams, input_ids_len))
+                let total_rows = (effective_batch_size * num_beams) as usize;
+                let mut expanded_mask =
+                    ndarray::Array2::<i64>::zeros((total_rows, input_ids_len as usize));
+                for row in 0..total_rows {
+                    expanded_mask
+                        .row_mut(row)
+                        .assign(&attention_mask.row(row % batch_size as usize));
+                }
+                expanded_mask
             } else {
                 attention_mask
             };
@@ -2098,9 +2090,7 @@ pub trait LanguageGenerator: PrivateLanguageGenerator {
         let max_length = if let Some(generate_options) = generate_options {
             match (generate_options.max_length, generate_options.max_new_tokens) {
                 (Some(max_length), _) => Some(max_length),
-                (None, Some(max_new_tokens)) => {
-                    Some(max_new_tokens + input_ids.size().last().unwrap())
-                }
+                (None, Some(max_new_tokens)) => Some(max_new_tokens + input_ids.ncols() as i64),
                 (None, None) => config.max_length,
             }
         } else {
@@ -2108,7 +2098,7 @@ pub trait LanguageGenerator: PrivateLanguageGenerator {
         };
 
         if let Some(max_length) = max_length {
-            if input_ids.size2()?.1 > max_length {
+            if input_ids.ncols() as i64 > max_length {
                 return Err(RustBertError::ValueError("The input ids exceeds the maximum length for generation.\
                  Reduce the size of the provided input ids or increase the allowable maximum generation length.".to_string()));
             }
@@ -2140,7 +2130,7 @@ pub trait LanguageGenerator: PrivateLanguageGenerator {
             bad_word_ids,
         };
 
-        let generated_output_with_scores = no_grad(|| {
+        let generated_output_with_scores = private_generation_utils::no_grad(|| {
             if num_beams > 1 {
                 self.generate_beam_search(
                     input_ids,
@@ -2170,22 +2160,17 @@ pub trait LanguageGenerator: PrivateLanguageGenerator {
             generated_output_with_scores.scores,
             generated_output_with_scores.token_scores,
         );
-        let num_sequences = *decoded.size().first().unwrap();
-        let mut output = Vec::with_capacity(num_sequences as usize);
+        let num_sequences = decoded.nrows();
+        let mut output = Vec::with_capacity(num_sequences);
         for sequence_index in 0..num_sequences {
-            let indices = decoded
-                .as_ref()
-                .get(sequence_index)
-                .iter::<i64>()
-                .unwrap()
-                .collect::<Vec<i64>>();
+            let indices = decoded.row(sequence_index).to_vec();
             let score = scores
                 .as_ref()
-                .map(|scores_value| scores_value[sequence_index as usize]);
+                .map(|scores_value| scores_value[sequence_index]);
 
             let token_scores = token_scores
                 .as_mut()
-                .map(|token_scores| std::mem::take(&mut token_scores[sequence_index as usize]));
+                .map(|token_scores| std::mem::take(&mut token_scores[sequence_index]));
 
             output.push(GeneratedIndicesOutput {
                 indices,
@@ -2200,38 +2185,6 @@ pub trait LanguageGenerator: PrivateLanguageGenerator {
     ///
     /// # Returns
     /// * `&TokenizerOption` Reference to the generator's tokenizer.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// # use std::path::PathBuf;
-    /// # use tch::Device;
-    /// # fn main() -> anyhow::Result<()> {
-    /// use rust_bert::gpt2::GPT2Generator;
-    /// use rust_bert::pipelines::generation_utils::{GenerateConfig, LanguageGenerator};
-    /// use tch::Tensor;
-    /// # let mut home: PathBuf = dirs::home_dir().unwrap();
-    /// # home.push("rustbert");
-    /// # home.push("gpt2");
-    /// # let config_path = &home.as_path().join("config.json");
-    /// # let vocab_path = &home.as_path().join("vocab.txt");
-    /// # let merges_path = &home.as_path().join("merges.txt");
-    /// # let weights_path = &home.as_path().join("model.ot");
-    /// let device = Device::cuda_if_available();
-    /// let generate_config = GenerateConfig {
-    ///  max_length: Some(30),
-    ///  do_sample: true,
-    ///  num_beams: 5,
-    ///  temperature: 1.1,
-    ///  num_return_sequences: 3,
-    ///  ..Default::default()
-    /// };
-    /// let gpt2_generator = GPT2Generator::new(generate_config)?;
-    /// let tokenizer = gpt2_generator.get_tokenizer();
-    /// tokenizer.tokenize("Hello, world!");
-    /// # Ok(())
-    /// # }
-    /// ```
     fn get_tokenizer(&self) -> &TokenizerOption {
         self._get_tokenizer()
     }
@@ -2240,17 +2193,20 @@ pub trait LanguageGenerator: PrivateLanguageGenerator {
         self._get_tokenizer_mut()
     }
 
+    #[cfg(feature = "libtorch")]
     fn half(&mut self) -> Result<(), RustBertError> {
         self.get_var_store_mut()?.half();
         Ok(())
     }
 
+    #[cfg(feature = "libtorch")]
     fn float(&mut self) -> Result<(), RustBertError> {
         self.get_var_store_mut()?.float();
         Ok(())
     }
 
-    fn set_device(&mut self, device: Device) -> Result<(), RustBertError> {
+    #[cfg(feature = "libtorch")]
+    fn set_device(&mut self, device: tch::Device) -> Result<(), RustBertError> {
         self.get_var_store_mut()?.set_device(device);
         Ok(())
     }
@@ -2262,7 +2218,7 @@ struct BeamHypotheses {
     length_penalty: f64,
     early_stopping: bool,
     num_beams: i64,
-    beams: Vec<(f64, Tensor, Option<Tensor>)>,
+    beams: Vec<(f64, Vec<i64>, Option<Vec<f64>>)>,
     worst_score: f64,
 }
 
@@ -2273,19 +2229,7 @@ impl Clone for BeamHypotheses {
             length_penalty: self.length_penalty,
             early_stopping: self.early_stopping,
             num_beams: self.num_beams,
-            beams: self
-                .beams
-                .iter()
-                .map(|(score, tensor, scores_tensor)| {
-                    (
-                        *score,
-                        tensor.copy(),
-                        scores_tensor
-                            .as_ref()
-                            .map(|scores_tensor| scores_tensor.copy()),
-                    )
-                })
-                .collect::<Vec<(f64, Tensor, Option<Tensor>)>>(),
+            beams: self.beams.clone(),
             worst_score: self.worst_score,
         }
     }
@@ -2314,23 +2258,21 @@ impl BeamHypotheses {
 
     fn add(
         &mut self,
-        hypothesis: Tensor,
+        hypothesis: Vec<i64>,
         sum_log_probabilities: f64,
-        token_scores: Option<Tensor>,
+        token_scores: Option<Vec<f64>>,
     ) {
-        let score =
-            sum_log_probabilities / ((hypothesis.size()[0] as f64).powf(self.length_penalty));
+        let score = sum_log_probabilities / ((hypothesis.len() as f64).powf(self.length_penalty));
         if (self.len() < self.num_beams) | (score > self.worst_score) {
-            let token_scores = token_scores.map(|scores_tensor| {
-                scores_tensor.squeeze_dim(0).diff::<Tensor>(
-                    1,
-                    0,
-                    Some(Tensor::zeros(
-                        [1],
-                        (scores_tensor.kind(), scores_tensor.device()),
-                    )),
-                    None,
-                )
+            let token_scores = token_scores.map(|scores| {
+                // first-order difference with a 0 prepended (matching torch `diff` with prepend)
+                let mut diff = Vec::with_capacity(scores.len());
+                let mut previous = 0f64;
+                for value in scores {
+                    diff.push(value - previous);
+                    previous = value;
+                }
+                diff
             });
             self.beams.push((score, hypothesis, token_scores));
             if self.len() > self.num_beams {
@@ -2363,10 +2305,19 @@ impl BeamHypotheses {
     }
 }
 
-/// Container holding a language model output for generation tasks
+/// Container holding a language model output for generation tasks (LibTorch backend).
+#[cfg(feature = "libtorch")]
 pub struct LMModelOutput {
     /// Logits for each vocab item and position
-    pub lm_logits: Tensor,
+    pub lm_logits: tch::Tensor,
+    /// cached state for improved efficiency during decoding
+    pub cache: Cache,
+}
+
+/// Container holding a language model output for generation tasks (backend-neutral).
+pub struct GeneratedLogits {
+    /// Logits for each vocab item and position
+    pub lm_logits: ArrayD<f32>,
     /// cached state for improved efficiency during decoding
     pub cache: Cache,
 }

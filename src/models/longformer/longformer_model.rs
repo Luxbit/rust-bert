@@ -23,6 +23,7 @@ use crate::{Activation, Config, RustBertError};
 use serde::{Deserialize, Serialize};
 use std::borrow::Borrow;
 
+use std::cmp::{max, min};
 use tch::nn::{Init, Module, ModuleT};
 use tch::{nn, Kind, Tensor};
 
