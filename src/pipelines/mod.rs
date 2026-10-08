@@ -525,16 +525,13 @@
 //! ```
 
 pub mod common;
-#[cfg(feature = "libtorch")]
 pub mod conversation;
 pub mod generation_utils;
-#[cfg(feature = "libtorch")]
 pub mod keywords_extraction;
 pub mod masked_language;
 pub mod ner;
 pub mod pos_tagging;
 pub mod question_answering;
-#[cfg(feature = "libtorch")]
 pub mod sentence_embeddings;
 pub mod sentiment;
 pub mod sequence_classification;

@@ -40,10 +40,9 @@ pub use config::{
     SentenceEmbeddingsModulesConfig, SentenceEmbeddingsSentenceBertConfig,
     SentenceEmbeddingsTokenizerConfig,
 };
-pub use pipeline::{
-    SentenceEmbeddingsModel, SentenceEmbeddingsModelOutput, SentenceEmbeddingsOption,
-    SentenceEmbeddingsTokenizerOutput,
-};
+pub use pipeline::{SentenceEmbeddingsModel, SentenceEmbeddingsOption};
+#[cfg(feature = "libtorch")]
+pub use pipeline::{SentenceEmbeddingsModelOutput, SentenceEmbeddingsTokenizerOutput};
 
 pub use resources::{
     SentenceEmbeddingsConfigResources, SentenceEmbeddingsDenseConfigResources,

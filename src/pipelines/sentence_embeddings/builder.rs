@@ -1,15 +1,17 @@
 use std::path::PathBuf;
 
 use serde::Deserialize;
-use tch::{Device, Kind};
 
 use crate::pipelines::common::ModelType;
 use crate::pipelines::sentence_embeddings::{
     SentenceEmbeddingsConfig, SentenceEmbeddingsModel, SentenceEmbeddingsModulesConfig,
 };
+use crate::Device;
 use crate::{Config, RustBertError};
+#[cfg(feature = "libtorch")]
+use tch::Kind;
 
-#[cfg(feature = "remote")]
+#[cfg(all(feature = "remote", feature = "libtorch"))]
 use crate::{
     pipelines::sentence_embeddings::resources::SentenceEmbeddingsModelType,
     resources::RemoteResource,
@@ -21,6 +23,7 @@ use crate::{
 /// (configuration and weights).
 pub struct SentenceEmbeddingsBuilder<T> {
     device: Device,
+    #[cfg(feature = "libtorch")]
     kind: Option<Kind>,
     inner: T,
 }
@@ -31,6 +34,7 @@ impl<T> SentenceEmbeddingsBuilder<T> {
         self
     }
 
+    #[cfg(feature = "libtorch")]
     pub fn with_kind(mut self, kind: Kind) -> Self {
         self.kind = Some(kind);
         self
@@ -52,6 +56,7 @@ impl SentenceEmbeddingsBuilder<Local> {
     pub fn local<P: Into<PathBuf>>(model_dir: P) -> Self {
         Self {
             device: Device::cuda_if_available(),
+            #[cfg(feature = "libtorch")]
             kind: None,
             inner: Local {
                 model_dir: model_dir.into(),
@@ -113,6 +118,7 @@ impl SentenceEmbeddingsBuilder<Local> {
             tokenizer_vocab_resource: tokenizer_vocab.into(),
             tokenizer_merges_resource: tokenizer_merges.map(|r| r.into()),
             device: self.device,
+            #[cfg(feature = "libtorch")]
             kind: self.kind,
         };
 
@@ -126,10 +132,12 @@ pub struct Remote {
 }
 
 #[cfg(feature = "remote")]
+#[cfg(all(feature = "remote", feature = "libtorch"))]
 impl SentenceEmbeddingsBuilder<Remote> {
     pub fn remote(model_type: SentenceEmbeddingsModelType) -> Self {
         Self {
             device: Device::cuda_if_available(),
+            #[cfg(feature = "libtorch")]
             kind: None,
             inner: Remote {
                 config: SentenceEmbeddingsConfig::from(model_type),
