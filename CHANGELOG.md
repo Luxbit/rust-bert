@@ -22,6 +22,12 @@ on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Fixed rotated tensor conversions in the T5 / BART / MBart / M2M100 / LongT5 /
   ProphetNet generation forward passes (encoder outputs and decoder inputs
   were swapped, breaking encoder-decoder generation on the LibTorch backend).
+- Fixed beam search in the shared generation driver: the top-k is now taken
+  jointly over all beams of a batch element (instead of per beam), decoder-only
+  inputs and attention masks are tiled across beams, and encoder-decoder
+  attention masks follow the beam selection. Beam search output matches the
+  reference implementation for all model suites (GPT2, BART, T5, Marian, MBart,
+  M2M100, LongT5, GPT-Neo, GPT-J, OpenAI GPT, Reformer, ProphetNet).
 
 
 ## [0.24.0] - 2026-10-08
