@@ -46,6 +46,7 @@
 //! }
 //! ```
 //!
+#[cfg(feature = "remote")]
 use crate::bert::{BertConfigResources, BertModelResources, BertVocabResources};
 use crate::common::error::RustBertError;
 use crate::pipelines::common::{ConfigOption, ModelResource, ModelType, TokenizerOption};

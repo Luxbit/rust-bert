@@ -7,7 +7,7 @@ use rust_bert::pipelines::translation::{Language, TranslationConfig, Translation
 use rust_bert::resources::RemoteResource;
 
 #[test]
-// #[cfg_attr(not(feature = "all-tests"), ignore)]
+// #[cfg_attr(not(feature = "slow-tests"), ignore)]
 fn nllb_translation() -> anyhow::Result<()> {
     let model_resource = ModelResource::Torch(Box::new(RemoteResource::from_pretrained(
         NLLBResources::NLLB_600M_DISTILLED,

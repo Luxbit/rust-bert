@@ -32,7 +32,7 @@ if __name__ == "__main__":
             "run",
             "--bin=convert-tensor",
             "--features",
-            "download-libtorch",
+            "libtorch-download",
             "--manifest-path=%s" % toml_location,
             "--",
             source,

@@ -202,7 +202,7 @@ about exoplanets like K2-18b."];
 }
 
 #[test]
-#[cfg_attr(not(feature = "all-tests"), ignore)]
+#[cfg_attr(not(feature = "slow-tests"), ignore)]
 fn bart_zero_shot_classification() -> anyhow::Result<()> {
     //    Set-up model
     let zero_shot_config = ZeroShotClassificationConfig {
@@ -235,7 +235,7 @@ fn bart_zero_shot_classification() -> anyhow::Result<()> {
 }
 
 #[test]
-#[cfg_attr(not(feature = "all-tests"), ignore)]
+#[cfg_attr(not(feature = "slow-tests"), ignore)]
 fn bart_zero_shot_classification_try_error() -> anyhow::Result<()> {
     //    Set-up model
     let zero_shot_config = ZeroShotClassificationConfig {
@@ -263,7 +263,7 @@ fn bart_zero_shot_classification_try_error() -> anyhow::Result<()> {
 }
 
 #[test]
-#[cfg_attr(not(feature = "all-tests"), ignore)]
+#[cfg_attr(not(feature = "slow-tests"), ignore)]
 fn bart_zero_shot_classification_multilabel() -> anyhow::Result<()> {
     // Set-up model
     let zero_shot_config = ZeroShotClassificationConfig {
@@ -310,7 +310,7 @@ fn bart_zero_shot_classification_multilabel() -> anyhow::Result<()> {
 }
 
 #[test]
-#[cfg_attr(not(feature = "all-tests"), ignore)]
+#[cfg_attr(not(feature = "slow-tests"), ignore)]
 fn bart_zero_shot_classification_multilabel_try_error() -> anyhow::Result<()> {
     //    Set-up model
     let zero_shot_config = ZeroShotClassificationConfig {

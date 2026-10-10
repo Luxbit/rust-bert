@@ -202,5 +202,5 @@ if __name__ == "__main__":
         target,
     ]
     if args.download_libtorch:
-        cargo_args += ["--features", "download-libtorch"]
+        cargo_args += ["--features", "libtorch-download"]
     subprocess.run(cargo_args)

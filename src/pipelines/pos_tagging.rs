@@ -86,13 +86,18 @@ use crate::pipelines::token_classification::{TokenClassificationConfig, TokenCla
 use serde::{Deserialize, Serialize};
 
 use crate::pipelines::common::TokenizerOption;
+#[cfg(feature = "remote")]
 use crate::pipelines::token_classification::LabelAggregationOption;
+#[cfg(feature = "remote")]
 use crate::Device;
-use crate::{
-    mobilebert::{MobileBertConfigResources, MobileBertModelResources, MobileBertVocabResources},
-    pipelines::common::{ModelResource, ModelType},
-    resources::RemoteResource,
+#[cfg(feature = "remote")]
+use crate::pipelines::common::{ModelResource, ModelType};
+#[cfg(feature = "remote")]
+use crate::mobilebert::{
+    MobileBertConfigResources, MobileBertModelResources, MobileBertVocabResources,
 };
+#[cfg(feature = "remote")]
+use crate::resources::RemoteResource;
 
 #[derive(Debug, Serialize, Deserialize)]
 /// # Part of Speech tag

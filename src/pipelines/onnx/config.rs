@@ -33,15 +33,19 @@ impl ONNXEnvironmentConfig {
     /// Create a new `ONNXEnvironmentConfig` from a `rust_bert::Device`.
     /// This helper function maps the device to the ONNX Runtime execution providers.
     ///
-    /// Note that using a CUDA device requires the `cuda` feature of this crate (which enables
-    /// the `cuda` feature of the `ort` dependency and links the CUDA execution provider).
+    /// Note that using a CUDA device requires the `onnx-cuda` feature of this crate (which
+    /// enables the `cuda` feature of the `ort` dependency and links the CUDA execution provider).
     /// Without this feature, CUDA devices fall back to CPU execution.
+    ///
+    /// `Device::Mps` / `Device::Vulkan` (libtorch-only variants) have no ONNX
+    /// Runtime execution provider: they resolve to CPU execution here. Use
+    /// them with the libtorch backend, not with ONNX sessions.
     pub fn from_device(device: crate::Device) -> Self {
         let mut execution_providers = Vec::new();
         if let Some(device_id) = device.cuda_device_id() {
-            #[cfg(feature = "cuda")]
+            #[cfg(feature = "onnx-cuda")]
             execution_providers.push(ep::CUDA::default().with_device_id(device_id as i32).build());
-            #[cfg(not(feature = "cuda"))]
+            #[cfg(not(feature = "onnx-cuda"))]
             {
                 let _ = device_id;
             }

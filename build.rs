@@ -11,6 +11,10 @@
 // limitations under the License.
 
 fn main() {
+    // `doctest` is set by rustdoc; declare it explicitly so `cargo build`/
+    // clippy do not warn about the `#[cfg(doctest)]` README doctest holder.
+    println!("cargo:rustc-check-cfg=cfg(doctest)");
+
     // The libtorch link flags below are only required when the `tch` (LibTorch)
     // backend is enabled; ONNX-only builds must not link against libtorch.
     if std::env::var_os("CARGO_FEATURE_LIBTORCH").is_none() {
