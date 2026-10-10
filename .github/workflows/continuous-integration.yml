@@ -20,7 +20,7 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: build
-          args: --features download-libtorch
+          args: --features libtorch-download
 
   build-no-defaults:
     name: Build no defaults
@@ -35,7 +35,7 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: build
-          args: --no-default-features --features download-libtorch
+          args: --no-default-features --features libtorch-download
 
   check-onnx-only:
     name: Check ONNX-only build (no libtorch)
@@ -101,7 +101,7 @@ jobs:
         with:
           command: test
           args: --package rust-bert
-            --features onnx
+            --features libtorch-download,onnx
             --test onnx_parity
 
   check-libtorch-onnx:
@@ -117,7 +117,7 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: check
-          args: --features doc-only,onnx
+          args: --features libtorch-doc-only,onnx
 
   doc-tests:
     name: Doc tests (libtorch stub + ONNX)
@@ -132,7 +132,7 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: test
-          args: --features doc-only,onnx --doc
+          args: --features libtorch-doc-only,onnx --doc
 
   build-windows:
     name: Build Windows
@@ -147,7 +147,7 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: build
-          args: --features download-libtorch
+          args: --features libtorch-download
 
   build-mac-os:
     name: Build macOS
@@ -162,7 +162,7 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: build
-          args: --features download-libtorch
+          args: --features libtorch-download
 
   test-batch-0:
     name: Integration tests (batch 0)
@@ -189,7 +189,7 @@ jobs:
             --test fnet
             --test deberta
             --test deberta_v2
-            --features download-libtorch
+            --features libtorch-download
 
   test-batch-1:
     name: Integration tests (batch 1)
@@ -215,7 +215,7 @@ jobs:
             --test longformer
             --test pegasus
             --test gpt_neo
-            --features download-libtorch
+            --features libtorch-download
 
   test-batch-2:
     name: Integration tests (batch 2)
@@ -235,7 +235,7 @@ jobs:
             --test longt5
             --test gpt_j
             --test nllb
-            --features download-libtorch
+            --features libtorch-download
 
   test-opt-features:
     name: Integration tests (Optional features)
@@ -262,7 +262,7 @@ jobs:
             --features hf-tokenizers
             --test onnx
             --test hf_tokenizers
-            --features download-libtorch
+            --features libtorch-download
 
   convert-model:
     name: Model conversion test

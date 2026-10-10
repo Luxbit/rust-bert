@@ -1,8 +1,13 @@
 # ONNX Test Coverage & Cross-Backend Parity Plan
 
-Status: T1–T5 implemented (2026-10-08). Coverage tests: 7/7 green ort-only.
-Parity tests: 5 active and green; 8 `#[ignore]`d pending the beam-search scoring
-investigation below.
+> **Historical planning document.** This plan was executed on 2026-10-08; the
+> phase statuses and "pending" notes below predate the final results. See
+> [§10](#10-implementation-findings-2026-10-08) for the outcome. Kept for
+> reference, not current guidance.
+
+Status: implemented (2026-10-08). Coverage tests: 13 green ort-only
+(`tests/onnx.rs`, `tests/onnx_pipelines.rs`). Parity tests: 11 active and green
+(`tests/onnx_parity.rs`), 2 still `#[ignore]`d.
 
 ## 1. Goals
 

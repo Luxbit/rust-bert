@@ -44,16 +44,16 @@ impl Device {
     /// backends are opt-in (construct `Device::Mps` explicitly), mirroring
     /// `tch::Device::cuda_if_available()`.
     pub fn cuda_if_available() -> Self {
-        #[cfg(feature = "cuda")]
+        #[cfg(feature = "onnx-cuda")]
         {
             use ort::ep::ExecutionProvider;
             if ort::ep::CUDA::default().is_available().unwrap_or(false) {
                 return Device::Cuda(0);
             }
         }
-        #[cfg(all(feature = "libtorch", not(feature = "cuda")))]
+        #[cfg(all(feature = "libtorch", not(feature = "onnx-cuda")))]
         return Device::from(tch::Device::cuda_if_available());
-        #[cfg(any(not(feature = "libtorch"), feature = "cuda"))]
+        #[cfg(any(not(feature = "libtorch"), feature = "onnx-cuda"))]
         Device::Cpu
     }
 }

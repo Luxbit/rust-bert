@@ -10,7 +10,7 @@ use rust_bert::pipelines::translation::{
 use rust_bert::resources::RemoteResource;
 
 #[test]
-// #[cfg_attr(not(feature = "all-tests"), ignore)]
+// #[cfg_attr(not(feature = "slow-tests"), ignore)]
 fn test_translation() -> anyhow::Result<()> {
     //    Set-up translation model
     let model_resource = RemoteResource::from_pretrained(MarianModelResources::ENGLISH2ROMANCE);
@@ -49,7 +49,7 @@ fn test_translation() -> anyhow::Result<()> {
 }
 
 #[test]
-// #[cfg_attr(not(feature = "all-tests"), ignore)]
+// #[cfg_attr(not(feature = "slow-tests"), ignore)]
 fn test_translation_builder() -> anyhow::Result<()> {
     let model = TranslationModelBuilder::new()
         .with_device(rust_bert::Device::cuda_if_available())

@@ -69,24 +69,38 @@ required-features = ["libtorch"]
 opt-level = 3
 
 [features]
-default = ["remote", "default-tls", "libtorch"]
+# Default configuration: remote model resources + TLS. No inference backend is
+# enabled by default; enable `libtorch` and/or `onnx` explicitly.
+default = ["remote", "default-tls"]
+
+# Inference backends (at least one required; enforced in src/lib.rs)
 libtorch = ["dep:tch"]
-doc-only = ["libtorch", "tch/doc-only"]
-all-tests = []
-remote = ["cached-path", "dirs", "lazy_static"]
-download-libtorch = ["libtorch", "tch/download-libtorch"]
 onnx = ["dep:ort"]
-cuda = ["onnx", "ort/cuda"]
-rustls-tls = ["cached-path/rustls-tls"]
+
+# LibTorch backend options
+libtorch-download = ["libtorch", "tch/download-libtorch"]
+libtorch-doc-only = ["libtorch", "tch/doc-only"]
+
+# ONNX Runtime backend options
+onnx-cuda = ["onnx", "ort/cuda"]
+
+# Remote model resources (download + local cache)
+remote = ["cached-path", "dirs", "lazy_static"]
 default-tls = ["cached-path/default-tls"]
+rustls-tls = ["cached-path/rustls-tls"]
+
+# Tokenizers
 hf-tokenizers = ["tokenizers"]
 
+# Test-only
+slow-tests = []
+
 [package.metadata.docs.rs]
-features = ["doc-only"]
+features = ["libtorch-doc-only", "onnx"]
 
 [dependencies]
 rust_tokenizers = "8.1.1"
-tch = { version = "0.17.0", optional = true, features = ["download-libtorch"] }
+tch = { version = "0.17.0", optional = true }
 serde_json = "1"
 serde = { version = "1", features = ["derive"] }
 ordered-float = "5"
@@ -156,7 +170,7 @@ required-features = ["onnx"]
 
 [[example]]
 name = "generation_gpt2_hf_tokenizers"
-required-features = ["hf-tokenizers"]
+required-features = ["libtorch", "remote", "hf-tokenizers"]
 
 [[example]]
 name = "async-sentiment"

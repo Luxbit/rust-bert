@@ -714,7 +714,7 @@ fn gpt2_beam_search_token_scores() -> anyhow::Result<()> {
 }
 
 #[test]
-#[cfg_attr(not(feature = "all-tests"), ignore)]
+#[cfg_attr(not(feature = "slow-tests"), ignore)]
 fn dialogpt_single_multi_turn_conversation() -> anyhow::Result<()> {
     //    Set-up conversation model
     let conversation_config = ConversationConfig {
@@ -751,7 +751,7 @@ fn dialogpt_single_multi_turn_conversation() -> anyhow::Result<()> {
 }
 
 #[test]
-#[cfg_attr(not(feature = "all-tests"), ignore)]
+#[cfg_attr(not(feature = "slow-tests"), ignore)]
 fn dialogpt_multiple_multi_turn_conversation() -> anyhow::Result<()> {
     //    Set-up conversation model
     let conversation_config = ConversationConfig {
@@ -793,7 +793,7 @@ fn dialogpt_multiple_multi_turn_conversation() -> anyhow::Result<()> {
 }
 
 #[test]
-#[cfg_attr(not(feature = "all-tests"), ignore)]
+#[cfg_attr(not(feature = "slow-tests"), ignore)]
 fn dialogpt_multiple_multi_turn_conversation_with_truncation() -> anyhow::Result<()> {
     //    Set-up conversation model
     let conversation_config = ConversationConfig {
@@ -842,7 +842,7 @@ fn dialogpt_multiple_multi_turn_conversation_with_truncation() -> anyhow::Result
 }
 
 #[test]
-#[cfg_attr(not(feature = "all-tests"), ignore)]
+#[cfg_attr(not(feature = "slow-tests"), ignore)]
 fn dialogpt_multiple_multi_turn_conversation_with_conversation_deletion() -> anyhow::Result<()> {
     //    Set-up conversation model
     let conversation_config = ConversationConfig {

@@ -3,6 +3,47 @@
 All notable changes to this project will be documented in this file. The format is based
 on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [Unreleased]
+
+### Changed
+
+- (BREAKING) No inference backend is enabled by default anymore. The default
+  feature set is now `["remote", "default-tls"]`; `libtorch` or `onnx` must be
+  selected explicitly (enabling neither is a compile error).
+- (BREAKING) Reorganized the cargo features around an explicit
+  `backend`/`backend-option` naming scheme. Backend-specific options are now
+  prefixed with the backend they belong to, and the previous names were removed
+  (no aliases):
+  - `cuda` -> `onnx-cuda` (still implies `onnx`; there is no libtorch CUDA
+    feature, as LibTorch CUDA support is selected by the linked libtorch build,
+    not at compile time),
+  - `download-libtorch` -> `libtorch-download`,
+  - `doc-only` -> `libtorch-doc-only`,
+  - `all-tests` -> `slow-tests`.
+- The `remote` feature now requires a TLS backend: enabling `remote` without
+  `default-tls` or `rustls-tls` is a compile error instead of a silent runtime
+  failure.
+- Automatic LibTorch download is no longer forced on by the `tch` dependency;
+  it is enabled only through the `libtorch-download` feature.
+
+### Documentation
+
+- Enabled the `onnx` feature for docs.rs so the ONNX module is documented.
+- De-duplicated the ONNX export notes. The full text now lives in the
+  [`onnx` module](https://docs.rs/rust-bert/latest/rust_bert/pipelines/onnx/index.html)
+  docs; the README keeps a short section with the `ONNXModelResources` snippet,
+  and the crate docs link to both.
+- The README is now the single source for the ready-to-use pipelines,
+  benchmarks, model-weight loading, citation and acknowledgements; the crate
+  docs link to it instead of duplicating the content.
+- The README examples are compiled by `cargo test --doc`: the README is pulled
+  in through a `#[cfg(doctest)]` holder, so the examples remain single-sourced
+  while still being checked, without being duplicated in the rendered docs.
+- Proofreading pass: `Pytorch` -> `PyTorch`, `prepare the date` -> `data`,
+  `RemoteResources` -> `RemoteResource`, `Hugging face's` -> `Hugging Face's`.
+- Marked `docs/onnx-testing-plan.md` as a historical planning document and
+  refreshed its stale test-count status.
+
 ## [0.25.0] - 2026-10-08
 
 ### Fixed
