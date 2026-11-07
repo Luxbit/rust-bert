@@ -2501,6 +2501,14 @@ pub fn cast_var_store(varstore: &mut VarStore, kind: Option<Kind>, device: tch::
     match (kind, device) {
         (Some(kind), _) => varstore.set_kind(kind),
         (None, tch::Device::Cpu) => varstore.set_kind(Kind::Float),
+        // fp16 archives (e.g. Marian exports saved at half precision) are kept
+        // as-is on CUDA — autocast-style fp16 inference is a supported CUDA
+        // path. On MPS they must be promoted to fp32: libtorch 2.4's MPS graph
+        // builder rejects mixed-dtype ops ("'mps.add' op requires the same
+        // element type for all operands and results") and rust-bert computes
+        // part of its activations in fp32 regardless, so a fp16 VarStore is
+        // guaranteed to hit the mismatch mid-forward.
+        (None, tch::Device::Mps) => varstore.set_kind(Kind::Float),
         (None, _) => {}
     }
 }
