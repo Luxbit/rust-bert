@@ -565,6 +565,7 @@ impl QuestionAnsweringOption {
     /// Interface method to forward_t() of the particular models.
     pub fn forward_t(
         &self,
+        #[cfg_attr(not(feature = "libtorch"), allow(unused_variables))] device: Device,
         input_ids: Option<&ArrayD<i64>>,
         mask: Option<&ArrayD<i64>>,
         input_embeds: Option<&ArrayD<f32>>,
@@ -584,10 +585,10 @@ impl QuestionAnsweringOption {
             let token_type_ids_array = _token_type_ids;
             #[cfg_attr(not(feature = "onnx"), allow(unused_variables))]
             let input_embeds_array = input_embeds;
-            let input_ids = to_tensor_i64(input_ids);
-            let mask = to_tensor_i64(mask);
-            let _token_type_ids = to_tensor_i64(_token_type_ids);
-            let input_embeds = to_tensor_f32(input_embeds);
+            let input_ids = to_tensor_i64(input_ids, device.into());
+            let mask = to_tensor_i64(mask, device.into());
+            let _token_type_ids = to_tensor_i64(_token_type_ids, device.into());
+            let input_embeds = to_tensor_f32(input_embeds, device.into());
             match *self {
                 Self::Bert(ref model) => {
                     let outputs = model.forward_t(
@@ -809,6 +810,11 @@ pub struct QuestionAnsweringModel {
     max_query_length: usize,
     max_answer_len: usize,
     qa_model: QuestionAnsweringOption,
+    /// Device the wrapped model is resident on — inputs are converted to
+    /// tensors on this device before every forward (mixed-device inputs
+    /// crash op dispatch, e.g. MPS "Placeholder storage has not been
+    /// allocated on MPS device").
+    device: Device,
 }
 
 impl QuestionAnsweringModel {
@@ -910,6 +916,7 @@ impl QuestionAnsweringModel {
             max_query_length: question_answering_config.max_query_length,
             max_answer_len: question_answering_config.max_answer_length,
             qa_model,
+            device: question_answering_config.device,
         })
     }
 
@@ -992,6 +999,7 @@ impl QuestionAnsweringModel {
                     self.pad_features(batch_features);
 
                 let (start_logits, end_logits) = self.qa_model.forward_t(
+                    self.device,
                     Some(&input_ids.into_dyn()),
                     Some(&attention_masks.into_dyn()),
                     None,

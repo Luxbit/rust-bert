@@ -65,17 +65,30 @@ pub(crate) fn tensor_to_vec_i64(tensor: &Tensor) -> Result<Vec<i64>, RustBertErr
 }
 
 /// Convert a dynamically dimensioned `ndarray` array of `f32` values to a
-/// CPU-resident `tch` tensor.
-pub(crate) fn array_to_tensor_f32(array: &ArrayD<f32>) -> Result<Tensor, RustBertError> {
+/// `tch` tensor on `device`.
+///
+/// The array is materialized as a CPU tensor (`from_slice` is always
+/// CPU-resident) and immediately moved to `device`. The device MUST be the
+/// target model's device: models are backend-device-resident, and mixed-device
+/// inputs crash the op dispatch (e.g. libtorch's MPS `index_select` fails with
+/// "Placeholder storage has not been allocated on MPS device" when handed CPU
+/// indices).
+pub(crate) fn array_to_tensor_f32(array: &ArrayD<f32>, device: Device) -> Result<Tensor, RustBertError> {
     let shape: Vec<i64> = array.shape().iter().map(|&dim| dim as i64).collect();
     let data: Vec<f32> = array.iter().copied().collect();
-    Ok(Tensor::from_slice(&data).view(shape.as_slice()))
+    Ok(Tensor::from_slice(&data)
+        .view(shape.as_slice())
+        .to_device(device))
 }
 
 /// Convert a dynamically dimensioned `ndarray` array of `i64` values to a
-/// CPU-resident `tch` tensor.
-pub(crate) fn array_to_tensor_i64(array: &ArrayD<i64>) -> Result<Tensor, RustBertError> {
+/// `tch` tensor on `device`.
+///
+/// See `array_to_tensor_f32` for why `device` is mandatory.
+pub(crate) fn array_to_tensor_i64(array: &ArrayD<i64>, device: Device) -> Result<Tensor, RustBertError> {
     let shape: Vec<i64> = array.shape().iter().map(|&dim| dim as i64).collect();
     let data: Vec<i64> = array.iter().copied().collect();
-    Ok(Tensor::from_slice(&data).view(shape.as_slice()))
+    Ok(Tensor::from_slice(&data)
+        .view(shape.as_slice())
+        .to_device(device))
 }

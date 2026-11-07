@@ -129,7 +129,11 @@ impl SentenceEmbeddingsOption {
                         "ONNX model did not return last_hidden_state".to_string(),
                     )
                 })?;
-            let logits = crate::common::tensor_conversion::array_to_tensor_f32(&hidden)?;
+            // ONNX-encoder branch: the pooling modules are built on CPU by
+            // construction (VarStore::new(tch::Device::Cpu)), so the hidden
+            // state round-trips through CPU here by design.
+            let logits =
+                crate::common::tensor_conversion::array_to_tensor_f32(&hidden, tch::Device::Cpu)?;
             return Ok((logits, None));
         }
         #[cfg(feature = "onnx")]
@@ -150,7 +154,11 @@ impl SentenceEmbeddingsOption {
                         "ONNX model did not return last_hidden_state".to_string(),
                     )
                 })?;
-            let logits = crate::common::tensor_conversion::array_to_tensor_f32(&hidden)?;
+            // ONNX-encoder branch: the pooling modules are built on CPU by
+            // construction (VarStore::new(tch::Device::Cpu)), so the hidden
+            // state round-trips through CPU here by design.
+            let logits =
+                crate::common::tensor_conversion::array_to_tensor_f32(&hidden, tch::Device::Cpu)?;
             return Ok((logits, None));
         }
         match self {
@@ -172,7 +180,11 @@ impl SentenceEmbeddingsOption {
                             "ONNX model did not return last_hidden_state".to_string(),
                         )
                     })?;
-                let logits = crate::common::tensor_conversion::array_to_tensor_f32(&hidden)?;
+                // ONNX-encoder branch: the pooling modules are built on CPU by
+            // construction (VarStore::new(tch::Device::Cpu)), so the hidden
+            // state round-trips through CPU here by design.
+            let logits =
+                crate::common::tensor_conversion::array_to_tensor_f32(&hidden, tch::Device::Cpu)?;
                 Ok((logits, None))
             }
             #[cfg(feature = "libtorch")]

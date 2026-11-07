@@ -1532,13 +1532,13 @@ impl PrivateLanguageGenerator for XLNetGenerator {
             _encoder_outputs,
             _decoder_input_ids,
         ) = (
-            option_array2_to_tensor(input_ids),
-            option_array2_to_tensor(attention_mask),
-            option_array2_to_tensor(_token_type_ids),
-            option_array2_to_tensor(_position_ids),
-            option_array_to_tensor_f32(_input_embeds),
-            option_array_to_tensor_f32(_encoder_outputs),
-            option_array2_to_tensor(decoder_input_ids),
+            option_array2_to_tensor(input_ids, self.get_device()),
+            option_array2_to_tensor(attention_mask, self.get_device()),
+            option_array2_to_tensor(_token_type_ids, self.get_device()),
+            option_array2_to_tensor(_position_ids, self.get_device()),
+            option_array_to_tensor_f32(_input_embeds, self.get_device()),
+            option_array_to_tensor_f32(_encoder_outputs, self.get_device()),
+            option_array2_to_tensor(decoder_input_ids, self.get_device()),
         );
         // XLNet generation predicts only the last (dummy) token of the prepared
         // input: the permutation mask masks out that position and the target
@@ -1615,9 +1615,9 @@ impl PrivateLanguageGenerator for XLNetGenerator {
         _attention_mask: ndarray::Array2<i64>,
     ) -> PreparedInput<'a> {
         #[cfg(feature = "libtorch")]
-        let input_ids = option_array2_to_tensor(Some(&input_ids)).unwrap();
+        let input_ids = option_array2_to_tensor(Some(&input_ids), self.get_device()).unwrap();
         #[cfg(feature = "libtorch")]
-        let _attention_mask = option_array2_to_tensor(Some(&_attention_mask)).unwrap();
+        let _attention_mask = option_array2_to_tensor(Some(&_attention_mask), self.get_device()).unwrap();
         #[cfg(feature = "libtorch")]
         let effective_batch_size = input_ids.size()[0];
         let sequence_length = input_ids.size()[1];

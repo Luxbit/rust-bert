@@ -342,6 +342,7 @@ impl MaskedLanguageOption {
     /// Interface method to forward_t() of the particular models.
     pub fn forward_t(
         &self,
+        #[cfg_attr(not(feature = "libtorch"), allow(unused_variables))] device: Device,
         input_ids: Option<&ArrayD<i64>>,
         mask: Option<&ArrayD<i64>>,
         token_type_ids: Option<&ArrayD<i64>>,
@@ -366,13 +367,13 @@ impl MaskedLanguageOption {
             let position_ids_array = position_ids;
             #[cfg_attr(not(feature = "onnx"), allow(unused_variables))]
             let input_embeds_array = input_embeds;
-            let input_ids = to_tensor_i64(input_ids);
-            let mask = to_tensor_i64(mask);
-            let token_type_ids = to_tensor_i64(token_type_ids);
-            let position_ids = to_tensor_i64(position_ids);
-            let input_embeds = to_tensor_f32(input_embeds);
-            let encoder_hidden_states = to_tensor_f32(_encoder_hidden_states);
-            let encoder_mask = to_tensor_i64(_encoder_mask);
+            let input_ids = to_tensor_i64(input_ids, device.into());
+            let mask = to_tensor_i64(mask, device.into());
+            let token_type_ids = to_tensor_i64(token_type_ids, device.into());
+            let position_ids = to_tensor_i64(position_ids, device.into());
+            let input_embeds = to_tensor_f32(input_embeds, device.into());
+            let encoder_hidden_states = to_tensor_f32(_encoder_hidden_states, device.into());
+            let encoder_mask = to_tensor_i64(_encoder_mask, device.into());
             match *self {
                 Self::Bert(ref model) => tensor_to_array_f32(
                     &model
@@ -503,6 +504,11 @@ pub struct MaskedLanguageModel {
     language_encode: MaskedLanguageOption,
     mask_token: Option<String>,
     max_length: usize,
+    /// Device the wrapped model is resident on — inputs are converted to
+    /// tensors on this device before every forward (mixed-device inputs
+    /// crash op dispatch, e.g. MPS "Placeholder storage has not been
+    /// allocated on MPS device").
+    device: Device,
 }
 
 impl MaskedLanguageModel {
@@ -579,11 +585,13 @@ impl MaskedLanguageModel {
             .unwrap_or(usize::MAX);
 
         let mask_token = config.mask_token;
+        let device = config.device;
         Ok(MaskedLanguageModel {
             tokenizer,
             language_encode,
             mask_token,
             max_length,
+            device,
         })
     }
 
@@ -675,6 +683,7 @@ impl MaskedLanguageModel {
                 ))?;
 
         let output = self.language_encode.forward_t(
+            self.device,
             Some(&input_ids.clone().into_dyn()),
             None,
             Some(&token_type_ids.into_dyn()),

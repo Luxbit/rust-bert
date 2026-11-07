@@ -586,11 +586,11 @@ impl PrivateLanguageGenerator for OpenAIGenerator {
     ) -> Result<GeneratedLogits, RustBertError> {
         #[cfg(feature = "libtorch")]
         let (input_ids, attention_mask, token_type_ids, position_ids, input_embeds) = (
-            option_array2_to_tensor(input_ids),
-            option_array2_to_tensor(attention_mask),
-            option_array2_to_tensor(token_type_ids),
-            option_array2_to_tensor(position_ids),
-            option_array_to_tensor_f32(input_embeds),
+            option_array2_to_tensor(input_ids, self.get_device()),
+            option_array2_to_tensor(attention_mask, self.get_device()),
+            option_array2_to_tensor(token_type_ids, self.get_device()),
+            option_array2_to_tensor(position_ids, self.get_device()),
+            option_array_to_tensor_f32(input_embeds, self.get_device()),
         );
         #[cfg(not(feature = "libtorch"))]
         let (_, _, _, _, _) = (

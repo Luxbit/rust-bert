@@ -486,6 +486,7 @@ impl ZeroShotClassificationOption {
     /// Interface method to forward_t() of the particular models.
     pub fn forward_t(
         &self,
+        #[cfg_attr(not(feature = "libtorch"), allow(unused_variables))] device: Device,
         input_ids: Option<&ArrayD<i64>>,
         mask: Option<&ArrayD<i64>>,
         token_type_ids: Option<&ArrayD<i64>>,
@@ -508,11 +509,11 @@ impl ZeroShotClassificationOption {
             let position_ids_array = position_ids;
             #[cfg_attr(not(feature = "onnx"), allow(unused_variables))]
             let input_embeds_array = input_embeds;
-            let input_ids = to_tensor_i64(input_ids);
-            let mask = to_tensor_i64(mask);
-            let token_type_ids = to_tensor_i64(token_type_ids);
-            let position_ids = to_tensor_i64(position_ids);
-            let input_embeds = to_tensor_f32(input_embeds);
+            let input_ids = to_tensor_i64(input_ids, device.into());
+            let mask = to_tensor_i64(mask, device.into());
+            let token_type_ids = to_tensor_i64(token_type_ids, device.into());
+            let position_ids = to_tensor_i64(position_ids, device.into());
+            let input_embeds = to_tensor_f32(input_embeds, device.into());
             match *self {
                 Self::Bart(ref model) => tensor_to_array_f32(
                     &model
@@ -711,6 +712,11 @@ pub struct ZeroShotClassificationModel {
     /// Positions of the (contradiction, entailment) logits in the model output, read
     /// from the model configuration `id2label` mapping (defaults to (0, 2)).
     nli_logit_indices: (usize, usize),
+    /// Device the wrapped model is resident on — inputs are converted to
+    /// tensors on this device before every forward (mixed-device inputs
+    /// crash op dispatch, e.g. MPS "Placeholder storage has not been
+    /// allocated on MPS device").
+    device: Device,
 }
 
 impl ZeroShotClassificationModel {
@@ -796,6 +802,7 @@ impl ZeroShotClassificationModel {
             tokenizer,
             zero_shot_classifier,
             nli_logit_indices,
+            device: config.device,
         })
     }
 
@@ -981,6 +988,7 @@ impl ZeroShotClassificationModel {
             self.prepare_for_model(inputs.as_ref(), labels.as_ref(), template, max_length)?;
 
         let output = self.zero_shot_classifier.forward_t(
+            self.device,
             Some(&input_ids.into_dyn()),
             Some(&mask.into_dyn()),
             Some(&token_type_ids.into_dyn()),
@@ -1138,6 +1146,7 @@ impl ZeroShotClassificationModel {
             self.prepare_for_model(inputs.as_ref(), labels.as_ref(), template, max_length)?;
 
         let output = self.zero_shot_classifier.forward_t(
+            self.device,
             Some(&input_ids.into_dyn()),
             Some(&mask.into_dyn()),
             Some(&token_type_ids.into_dyn()),

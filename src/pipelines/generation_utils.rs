@@ -274,20 +274,37 @@ pub enum Cache {
     None,
 }
 
-/// Converts an optional 2-D integer array to an optional tensor (LibTorch only).
+/// Converts an optional 2-D integer array to an optional tensor on `device`
+/// (LibTorch only).
+///
+/// `device` must be the generation model's device (the wrappers expose it via
+/// `PrivateLanguageGenerator::get_device`): the generation drivers exchange
+/// backend-neutral arrays while the models are resident on their configured
+/// device — mixed-device inputs crash op dispatch (e.g. MPS "Placeholder
+/// storage has not been allocated on MPS device").
 #[cfg(feature = "libtorch")]
-pub(crate) fn option_array2_to_tensor(array: Option<&ndarray::Array2<i64>>) -> Option<Tensor> {
+pub(crate) fn option_array2_to_tensor(
+    array: Option<&ndarray::Array2<i64>>,
+    device: crate::Device,
+) -> Option<Tensor> {
     array.map(|array| {
-        crate::common::tensor_conversion::array_to_tensor_i64(&array.clone().into_dyn())
-            .expect("Error converting array input to tensor")
+        crate::common::tensor_conversion::array_to_tensor_i64(
+            &array.clone().into_dyn(),
+            device.into(),
+        )
+        .expect("Error converting array input to tensor")
     })
 }
 
-/// Converts an optional array to an optional tensor (LibTorch only).
+/// Converts an optional array to an optional tensor on `device` (LibTorch
+/// only). See `option_array2_to_tensor` for the device contract.
 #[cfg(feature = "libtorch")]
-pub(crate) fn option_array_to_tensor_f32(array: Option<&ArrayD<f32>>) -> Option<Tensor> {
+pub(crate) fn option_array_to_tensor_f32(
+    array: Option<&ArrayD<f32>>,
+    device: crate::Device,
+) -> Option<Tensor> {
     array.map(|array| {
-        crate::common::tensor_conversion::array_to_tensor_f32(array)
+        crate::common::tensor_conversion::array_to_tensor_f32(array, device.into())
             .expect("Error converting array input to tensor")
     })
 }

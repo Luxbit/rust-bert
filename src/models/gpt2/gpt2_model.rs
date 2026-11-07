@@ -686,13 +686,13 @@ impl PrivateLanguageGenerator for GPT2Generator {
             _encoder_outputs,
             _decoder_input_ids,
         ) = (
-            option_array2_to_tensor(input_ids),
-            option_array2_to_tensor(attention_mask),
-            option_array2_to_tensor(token_type_ids),
-            option_array2_to_tensor(position_ids),
-            option_array2_to_tensor(_decoder_input_ids),
-            option_array_to_tensor_f32(input_embeds),
-            option_array_to_tensor_f32(_encoder_outputs),
+            option_array2_to_tensor(input_ids, self.get_device()),
+            option_array2_to_tensor(attention_mask, self.get_device()),
+            option_array2_to_tensor(token_type_ids, self.get_device()),
+            option_array2_to_tensor(position_ids, self.get_device()),
+            option_array2_to_tensor(_decoder_input_ids, self.get_device()),
+            option_array_to_tensor_f32(input_embeds, self.get_device()),
+            option_array_to_tensor_f32(_encoder_outputs, self.get_device()),
         );
         #[cfg(not(feature = "libtorch"))]
         let (_, _, _, _, _, _, _) = (
@@ -794,7 +794,7 @@ impl PrivateLanguageGenerator for GPT2Generator {
         let beam_indices = Tensor::from_slice(beam_indices);
         #[cfg(feature = "libtorch")]
         let _encoder_outputs_tensor = _encoder_outputs.map(|output| {
-            crate::common::tensor_conversion::array_to_tensor_f32(&output)
+            crate::common::tensor_conversion::array_to_tensor_f32(&output, self.get_device().into())
                 .expect("Error converting encoder output")
         });
         match past {

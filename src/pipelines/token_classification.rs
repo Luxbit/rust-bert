@@ -590,6 +590,7 @@ impl TokenClassificationOption {
 
     fn forward_t(
         &self,
+        #[cfg_attr(not(feature = "libtorch"), allow(unused_variables))] device: Device,
         input_ids: Option<&ArrayD<i64>>,
         mask: Option<&ArrayD<i64>>,
         token_type_ids: Option<&ArrayD<i64>>,
@@ -612,11 +613,11 @@ impl TokenClassificationOption {
             let position_ids_array = position_ids;
             #[cfg_attr(not(feature = "onnx"), allow(unused_variables))]
             let input_embeds_array = input_embeds;
-            let input_ids = to_tensor_i64(input_ids);
-            let mask = to_tensor_i64(mask);
-            let token_type_ids = to_tensor_i64(token_type_ids);
-            let position_ids = to_tensor_i64(position_ids);
-            let input_embeds = to_tensor_f32(input_embeds);
+            let input_ids = to_tensor_i64(input_ids, device.into());
+            let mask = to_tensor_i64(mask, device.into());
+            let token_type_ids = to_tensor_i64(token_type_ids, device.into());
+            let position_ids = to_tensor_i64(position_ids, device.into());
+            let input_embeds = to_tensor_f32(input_embeds, device.into());
             match *self {
                 Self::Bert(ref model) => tensor_to_array_f32(
                     &model
@@ -806,6 +807,12 @@ pub struct TokenClassificationModel {
     label_aggregation_function: LabelAggregationOption,
     max_length: usize,
     batch_size: usize,
+    /// Device the wrapped model is resident on. The backend-neutral arrays the
+    /// pipeline exchanges are converted to tensors here before every forward —
+    /// they must land on the model device or op dispatch crashes on
+    /// device-mismatched inputs (e.g. MPS "Placeholder storage has not been
+    /// allocated on MPS device").
+    device: Device,
 }
 
 impl TokenClassificationModel {
@@ -887,6 +894,7 @@ impl TokenClassificationModel {
             .unwrap_or(usize::MAX);
         let label_mapping = model_config.get_label_mapping().clone();
         let batch_size = config.batch_size;
+        let device = config.device;
         Ok(TokenClassificationModel {
             tokenizer,
             token_sequence_classifier,
@@ -894,6 +902,7 @@ impl TokenClassificationModel {
             label_aggregation_function,
             max_length,
             batch_size,
+            device,
         })
     }
 
@@ -1083,6 +1092,7 @@ impl TokenClassificationModel {
                 let (input_ids, attention_masks, token_type_ids) =
                     self.pad_features(batch_features);
                 let output = self.token_sequence_classifier.forward_t(
+                    self.device,
                     Some(&input_ids.clone().into_dyn()),
                     Some(&attention_masks.into_dyn()),
                     Some(&token_type_ids.into_dyn()),

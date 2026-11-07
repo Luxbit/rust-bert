@@ -698,13 +698,13 @@ impl PrivateLanguageGenerator for LongT5Generator {
             encoder_outputs,
             decoder_input_ids,
         ) = (
-            option_array2_to_tensor(input_ids),
-            option_array2_to_tensor(attention_mask),
-            option_array2_to_tensor(_token_type_ids),
-            option_array2_to_tensor(_position_ids),
-            option_array_to_tensor_f32(_input_embeds),
-            option_array_to_tensor_f32(encoder_outputs),
-            option_array2_to_tensor(decoder_input_ids),
+            option_array2_to_tensor(input_ids, self.get_device()),
+            option_array2_to_tensor(attention_mask, self.get_device()),
+            option_array2_to_tensor(_token_type_ids, self.get_device()),
+            option_array2_to_tensor(_position_ids, self.get_device()),
+            option_array_to_tensor_f32(_input_embeds, self.get_device()),
+            option_array_to_tensor_f32(encoder_outputs, self.get_device()),
+            option_array2_to_tensor(decoder_input_ids, self.get_device()),
         );
         #[cfg(not(feature = "libtorch"))]
         let (_, _, _, _, _, _, _) = (
@@ -761,8 +761,8 @@ impl PrivateLanguageGenerator for LongT5Generator {
     ) -> Option<ArrayD<f32>> {
         #[cfg(feature = "libtorch")]
         {
-            let input_ids_tensor = option_array2_to_tensor(Some(input_ids))?;
-            let attention_mask_tensor = option_array2_to_tensor(attention_mask);
+            let input_ids_tensor = option_array2_to_tensor(Some(input_ids), self.get_device())?;
+            let attention_mask_tensor = option_array2_to_tensor(attention_mask, self.get_device());
             let encoded = self
                 .model
                 .encode(&input_ids_tensor, attention_mask_tensor.as_ref());
@@ -815,7 +815,7 @@ impl PrivateLanguageGenerator for LongT5Generator {
         let beam_indices = Tensor::from_slice(beam_indices);
         #[cfg(feature = "libtorch")]
         let _encoder_outputs_tensor = encoder_outputs.clone().map(|output| {
-            crate::common::tensor_conversion::array_to_tensor_f32(&output)
+            crate::common::tensor_conversion::array_to_tensor_f32(&output, self.get_device().into())
                 .expect("Error converting encoder output")
         });
         match past {

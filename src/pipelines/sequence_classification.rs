@@ -484,6 +484,7 @@ impl SequenceClassificationOption {
     /// Interface method to forward_t() of the particular models.
     pub fn forward_t(
         &self,
+        #[cfg_attr(not(feature = "libtorch"), allow(unused_variables))] device: Device,
         input_ids: Option<&ArrayD<i64>>,
         mask: Option<&ArrayD<i64>>,
         token_type_ids: Option<&ArrayD<i64>>,
@@ -504,11 +505,11 @@ impl SequenceClassificationOption {
             let position_ids_array = position_ids;
             #[cfg_attr(not(feature = "onnx"), allow(unused_variables))]
             let input_embeds_array = input_embeds;
-            let input_ids = to_tensor_i64(input_ids);
-            let mask = to_tensor_i64(mask);
-            let token_type_ids = to_tensor_i64(token_type_ids);
-            let position_ids = to_tensor_i64(position_ids);
-            let input_embeds = to_tensor_f32(input_embeds);
+            let input_ids = to_tensor_i64(input_ids, device.into());
+            let mask = to_tensor_i64(mask, device.into());
+            let token_type_ids = to_tensor_i64(token_type_ids, device.into());
+            let position_ids = to_tensor_i64(position_ids, device.into());
+            let input_embeds = to_tensor_f32(input_embeds, device.into());
             match *self {
                 Self::Bart(ref model) => {
                     let input_ids =
@@ -721,6 +722,11 @@ pub struct SequenceClassificationModel {
     sequence_classifier: SequenceClassificationOption,
     label_mapping: HashMap<i64, String>,
     max_length: usize,
+    /// Device the wrapped model is resident on — inputs are converted to
+    /// tensors on this device before every forward (mixed-device inputs
+    /// crash op dispatch, e.g. MPS "Placeholder storage has not been
+    /// allocated on MPS device").
+    device: Device,
 }
 
 impl SequenceClassificationModel {
@@ -799,11 +805,13 @@ impl SequenceClassificationModel {
             .map(|v| v as usize)
             .unwrap_or(usize::MAX);
         let label_mapping = model_config.get_label_mapping().clone();
+        let device = config.device;
         Ok(SequenceClassificationModel {
             tokenizer,
             sequence_classifier,
             label_mapping,
             max_length,
+            device,
         })
     }
 
@@ -850,6 +858,7 @@ impl SequenceClassificationModel {
             .tokenizer
             .encode_and_pad(input.as_ref(), self.max_length);
         let output = self.sequence_classifier.forward_t(
+            self.device,
             Some(&input_ids.into_dyn()),
             None,
             Some(&token_type_ids.into_dyn()),
@@ -908,6 +917,7 @@ impl SequenceClassificationModel {
     ) -> Result<Vec<Vec<Label>>, RustBertError> {
         let (input_ids, token_type_ids) = self.tokenizer.encode_and_pad(input, self.max_length);
         let output = self.sequence_classifier.forward_t(
+            self.device,
             Some(&input_ids.into_dyn()),
             None,
             Some(&token_type_ids.into_dyn()),

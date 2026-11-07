@@ -2470,20 +2470,28 @@ impl TokenizerOption {
     }
 }
 
-/// Convert an optional ndarray input to an optional tensor (LibTorch builds only).
+/// Convert an optional ndarray input to an optional tensor placed on `device`
+/// (LibTorch builds only).
+///
+/// `device` must be the target model's device: the pipeline boundary converts
+/// the backend-neutral arrays the drivers exchange, and the models are
+/// resident on their configured device — mixed-device inputs crash op
+/// dispatch (e.g. MPS "Placeholder storage has not been allocated on MPS
+/// device").
 #[cfg(feature = "libtorch")]
-pub(crate) fn to_tensor_i64(array: Option<&ArrayD<i64>>) -> Option<Tensor> {
+pub(crate) fn to_tensor_i64(array: Option<&ArrayD<i64>>, device: tch::Device) -> Option<Tensor> {
     array.map(|array| {
-        crate::common::tensor_conversion::array_to_tensor_i64(array)
+        crate::common::tensor_conversion::array_to_tensor_i64(array, device)
             .expect("Error converting ndarray input to tensor")
     })
 }
 
-/// Convert an optional ndarray input to an optional tensor (LibTorch builds only).
+/// Convert an optional ndarray input to an optional tensor placed on `device`
+/// (LibTorch builds only). See `to_tensor_i64` for the device contract.
 #[cfg(feature = "libtorch")]
-pub(crate) fn to_tensor_f32(array: Option<&ArrayD<f32>>) -> Option<Tensor> {
+pub(crate) fn to_tensor_f32(array: Option<&ArrayD<f32>>, device: tch::Device) -> Option<Tensor> {
     array.map(|array| {
-        crate::common::tensor_conversion::array_to_tensor_f32(array)
+        crate::common::tensor_conversion::array_to_tensor_f32(array, device)
             .expect("Error converting ndarray input to tensor")
     })
 }
