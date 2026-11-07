@@ -1717,7 +1717,8 @@ impl PrivateLanguageGenerator for XLNetGenerator {
     ) -> Option<ArrayD<f32>> {
         #[cfg(feature = "libtorch")]
         {
-            let beam_indices_tensor = tch::Tensor::from_slice(beam_indices);
+            let beam_indices_tensor =
+                tch::Tensor::from_slice(beam_indices).to_device(self.get_device().into());
             match past {
                 Cache::XLNetCache(old_cache_option) => match old_cache_option {
                     Some(old_cache) => {

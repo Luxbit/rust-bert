@@ -1137,7 +1137,7 @@ impl PrivateLanguageGenerator for ProphetNetConditionalGenerator {
         beam_indices: &[i64],
     ) -> Option<ArrayD<f32>> {
         #[cfg(feature = "libtorch")]
-        let beam_indices = Tensor::from_slice(beam_indices);
+        let beam_indices = Tensor::from_slice(beam_indices).to_device(self.get_device().into());
         #[cfg(feature = "libtorch")]
         let encoder_outputs_tensor = encoder_outputs.map(|output| {
             crate::common::tensor_conversion::array_to_tensor_f32(&output, self.get_device().into())
